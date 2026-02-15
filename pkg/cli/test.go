@@ -131,20 +131,6 @@ Examples:
 		// Emulator management flags (start-emulator, auto-start-emulator,
 		// shutdown-after, boot-timeout) are global flags defined in cli.go.
 
-		// AI options
-		&cli.BoolFlag{
-			Name:  "analyze",
-			Usage: "Enhance output with AI insights",
-		},
-		&cli.StringFlag{
-			Name:  "api-url",
-			Usage: "API base URL",
-			Value: "https://api.copilot.mobile.dev",
-		},
-		&cli.StringFlag{
-			Name:  "api-key",
-			Usage: "API key",
-		},
 	},
 	Action: runTest,
 }
