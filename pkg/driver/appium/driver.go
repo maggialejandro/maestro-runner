@@ -788,20 +788,9 @@ func elementToInfoWithClickable(matched, clickable *ParsedElement, platform stri
 // Helper functions
 
 func successResult(msg string, elem *core.ElementInfo) *core.CommandResult {
-	return &core.CommandResult{
-		Success: true,
-		Message: msg,
-		Element: elem,
-	}
+	return core.SuccessResult(msg, elem)
 }
 
 func errorResult(err error, msg string) *core.CommandResult {
-	if msg == "" && err != nil {
-		msg = err.Error()
-	}
-	return &core.CommandResult{
-		Success: false,
-		Error:   err,
-		Message: msg,
-	}
+	return core.ErrorResult(err, msg)
 }

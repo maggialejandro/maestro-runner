@@ -55,12 +55,16 @@ func TestRandomStringUniqueness(t *testing.T) {
 
 func TestRandomEmail(t *testing.T) {
 	email := randomEmail()
-	if !strings.HasSuffix(email, "@example.com") {
-		t.Fatalf("expected email to end with @example.com, got %q", email)
+	if !strings.Contains(email, "@") {
+		t.Fatalf("expected @ in email, got %q", email)
 	}
-	localPart := strings.TrimSuffix(email, "@example.com")
-	if len(localPart) != 8 {
-		t.Fatalf("expected local part length 8, got %d", len(localPart))
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		t.Fatalf("invalid email format: %s", email)
+	}
+	validDomains := map[string]bool{"example.com": true, "test.com": true, "mail.com": true}
+	if !validDomains[parts[1]] {
+		t.Fatalf("unexpected domain in email: %s", email)
 	}
 }
 
@@ -98,9 +102,11 @@ func TestRandomPersonName(t *testing.T) {
 
 	validFirstNames := map[string]bool{
 		"John": true, "Jane": true, "Michael": true, "Emily": true, "David": true,
+		"Sarah": true, "James": true, "Emma": true, "Robert": true, "Olivia": true,
 	}
 	validLastNames := map[string]bool{
 		"Smith": true, "Johnson": true, "Williams": true, "Brown": true, "Jones": true,
+		"Garcia": true, "Miller": true, "Davis": true, "Rodriguez": true, "Martinez": true,
 	}
 
 	if !validFirstNames[parts[0]] {

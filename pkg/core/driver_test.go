@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -165,6 +166,112 @@ func TestExecutedByConstants(t *testing.T) {
 	}
 	if ExecutedByRunner != "runner" {
 		t.Errorf("ExecutedByRunner = %s, want runner", ExecutedByRunner)
+	}
+}
+
+func TestSuccessResult(t *testing.T) {
+	// With message and element
+	elem := &ElementInfo{ID: "btn-1", Text: "OK"}
+	result := SuccessResult("Tapped", elem)
+	if !result.Success {
+		t.Error("SuccessResult should set Success to true")
+	}
+	if result.Message != "Tapped" {
+		t.Errorf("Message = %q, want %q", result.Message, "Tapped")
+	}
+	if result.Element != elem {
+		t.Error("Element should match the provided element")
+	}
+	if result.Error != nil {
+		t.Error("Error should be nil for success result")
+	}
+
+	// With nil element
+	result2 := SuccessResult("Done", nil)
+	if result2.Element != nil {
+		t.Error("Element should be nil when nil passed")
+	}
+}
+
+func TestErrorResult(t *testing.T) {
+	// With error and message
+	err := fmt.Errorf("not found")
+	result := ErrorResult(err, "Element missing")
+	if result.Success {
+		t.Error("ErrorResult should set Success to false")
+	}
+	if result.Error != err {
+		t.Error("Error should match the provided error")
+	}
+	if result.Message != "Element missing" {
+		t.Errorf("Message = %q, want %q", result.Message, "Element missing")
+	}
+
+	// With error and empty message (should use err.Error())
+	result2 := ErrorResult(err, "")
+	if result2.Message != "not found" {
+		t.Errorf("Message = %q, want %q (from err.Error())", result2.Message, "not found")
+	}
+
+	// With nil error and empty message
+	result3 := ErrorResult(nil, "")
+	if result3.Message != "" {
+		t.Errorf("Message = %q, want empty", result3.Message)
+	}
+
+	// With nil error and custom message
+	result4 := ErrorResult(nil, "custom msg")
+	if result4.Message != "custom msg" {
+		t.Errorf("Message = %q, want %q", result4.Message, "custom msg")
+	}
+}
+
+func TestHasNonASCII(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"hello", false},
+		{"Hello World 123!", false},
+		{"", false},
+		{"abc\t\n", false},
+		{"\x7f", false},  // DEL is ASCII (127)
+		{"\x80", true},   // first non-ASCII byte
+		{"cafe\u0301", true}, // e with combining accent
+		{"hello world", false},
+	}
+
+	for _, tt := range tests {
+		got := HasNonASCII(tt.input)
+		if got != tt.expected {
+			t.Errorf("HasNonASCII(%q) = %v, want %v", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestBounds_CenterInside(t *testing.T) {
+	outer := Bounds{X: 0, Y: 0, Width: 100, Height: 100}
+
+	tests := []struct {
+		name     string
+		inner    Bounds
+		expected bool
+	}{
+		{"centered inside", Bounds{X: 25, Y: 25, Width: 50, Height: 50}, true},
+		{"at origin", Bounds{X: 0, Y: 0, Width: 10, Height: 10}, true},
+		{"at edge", Bounds{X: 90, Y: 90, Width: 10, Height: 10}, true},
+		{"center outside right", Bounds{X: 200, Y: 50, Width: 20, Height: 20}, false},
+		{"center outside below", Bounds{X: 50, Y: 200, Width: 20, Height: 20}, false},
+		{"zero-size at center", Bounds{X: 50, Y: 50, Width: 0, Height: 0}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.inner.CenterInside(outer)
+			if got != tt.expected {
+				t.Errorf("Bounds%+v.CenterInside(%+v) = %v, want %v", tt.inner, outer, got, tt.expected)
+			}
+		})
 	}
 }
 

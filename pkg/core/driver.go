@@ -56,6 +56,27 @@ type CommandResult struct {
 	Debug interface{} `json:"-"`
 }
 
+// SuccessResult creates a successful command result.
+func SuccessResult(msg string, elem *ElementInfo) *CommandResult {
+	return &CommandResult{
+		Success: true,
+		Message: msg,
+		Element: elem,
+	}
+}
+
+// ErrorResult creates a failed command result.
+func ErrorResult(err error, msg string) *CommandResult {
+	if msg == "" && err != nil {
+		msg = err.Error()
+	}
+	return &CommandResult{
+		Success: false,
+		Error:   err,
+		Message: msg,
+	}
+}
+
 // ElementInfo represents information about a UI element
 type ElementInfo struct {
 	ID                 string            `json:"id,omitempty"`
