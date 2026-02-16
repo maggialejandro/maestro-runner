@@ -655,6 +655,39 @@ func (d *Driver) launchApp(step *flow.LaunchAppStep) *core.CommandResult {
 		d.alertAction = resolveAlertAction(permissions)
 	}
 
+	// Convert arguments map to iOS launch arguments format
+	var launchArgs []string
+	launchEnv := make(map[string]string)
+
+	// Populate launchEnv from environment field
+	for key, value := range step.Environment {
+		launchEnv[key] = value
+	}
+
+	// Populate launchArgs and launchEnv from arguments field
+	if len(step.Arguments) > 0 {
+		for key, value := range step.Arguments {
+			var strVal string
+			switch v := value.(type) {
+			case string:
+				strVal = v
+			case bool:
+				if v {
+					strVal = "true"
+				} else {
+					strVal = "false"
+				}
+			default:
+				strVal = fmt.Sprint(v)
+			}
+			launchArgs = append(launchArgs, fmt.Sprintf("-%s", key), strVal)
+			// Also set as environment variable so the app can read via ProcessInfo.environment
+			launchEnv[key] = strVal
+		}
+	}
+
+	hasArgs := len(launchArgs) > 0 || len(launchEnv) > 0
+
 	// If no session exists, create one (which also launches the app)
 	if !d.client.HasSession() {
 		if err := d.client.CreateSession(bundleID, d.alertAction); err != nil {
@@ -675,34 +708,21 @@ func (d *Driver) launchApp(step *flow.LaunchAppStep) *core.CommandResult {
 				})
 			}
 		}
-		time.Sleep(time.Second) // Brief wait for app to start
-		return successResult(fmt.Sprintf("Launched app: %s", bundleID), nil)
-	}
-
-	// Convert arguments map to iOS launch arguments format
-	var launchArgs []string
-	var launchEnv map[string]string
-	if len(step.Arguments) > 0 {
-		launchEnv = make(map[string]string)
-		for key, value := range step.Arguments {
-			// iOS arguments: pass as -key value pairs for command line args
-			// or as environment variables
-			switch v := value.(type) {
-			case string:
-				launchArgs = append(launchArgs, fmt.Sprintf("-%s", key), v)
-			case bool:
-				if v {
-					launchArgs = append(launchArgs, fmt.Sprintf("-%s", key), "true")
-				} else {
-					launchArgs = append(launchArgs, fmt.Sprintf("-%s", key), "false")
-				}
-			default:
-				launchArgs = append(launchArgs, fmt.Sprintf("-%s", key), fmt.Sprint(v))
-			}
+		// If no arguments/environment, the session creation already launched the app
+		if !hasArgs {
+			time.Sleep(time.Second) // Brief wait for app to start
+			return successResult(fmt.Sprintf("Launched app: %s", bundleID), nil)
 		}
+		// Fall through to LaunchAppWithArgs to relaunch with arguments
 	}
 
-	// Session exists - use LaunchApp to launch/relaunch the app
+	// Terminate the app first so WDA calls launch (not activate),
+	// which is required for arguments/environment to take effect
+	if hasArgs {
+		_ = d.client.TerminateApp(bundleID)
+	}
+
+	// Launch the app (with or without args)
 	if err := d.client.LaunchAppWithArgs(bundleID, launchArgs, launchEnv); err != nil {
 		return errorResult(err, fmt.Sprintf("Failed to launch app: %s", bundleID))
 	}

@@ -321,7 +321,8 @@ type LaunchAppStep struct {
 	ClearKeychain bool              `yaml:"clearKeychain"`
 	StopApp       *bool             `yaml:"stopApp"`
 	Permissions   map[string]string `yaml:"permissions"`
-	Arguments     map[string]any    `yaml:"arguments"` // Can be list or map
+	Arguments     map[string]any    `yaml:"arguments"`    // Launch arguments (-key value pairs)
+	Environment   map[string]string `yaml:"environment"`  // Launch environment variables
 }
 
 // StopAppStep stops an app.

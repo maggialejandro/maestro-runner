@@ -940,6 +940,60 @@ func TestScriptEngine_ExpandStep_LaunchAppStep(t *testing.T) {
 	}
 }
 
+func TestScriptEngine_ExpandStep_LaunchAppStep_Arguments(t *testing.T) {
+	se := NewScriptEngine()
+	defer se.Close()
+
+	se.SetVariable("TOKEN", "abc123")
+	se.SetVariable("MODE", "debug")
+
+	step := &flow.LaunchAppStep{
+		AppID: "com.example.app",
+		Arguments: map[string]any{
+			"auth_token": "${TOKEN}",
+			"mode":       "${MODE}",
+			"count":      42, // non-string should be left as-is
+		},
+	}
+
+	se.ExpandStep(step)
+
+	if step.Arguments["auth_token"] != "abc123" {
+		t.Errorf("Arguments[auth_token] = %v, want %q", step.Arguments["auth_token"], "abc123")
+	}
+	if step.Arguments["mode"] != "debug" {
+		t.Errorf("Arguments[mode] = %v, want %q", step.Arguments["mode"], "debug")
+	}
+	if step.Arguments["count"] != 42 {
+		t.Errorf("Arguments[count] = %v, want 42", step.Arguments["count"])
+	}
+}
+
+func TestScriptEngine_ExpandStep_LaunchAppStep_Environment(t *testing.T) {
+	se := NewScriptEngine()
+	defer se.Close()
+
+	se.SetVariable("BASE_URL", "https://api.example.com")
+	se.SetVariable("STAGE", "staging")
+
+	step := &flow.LaunchAppStep{
+		AppID: "com.example.app",
+		Environment: map[string]string{
+			"API_URL": "${BASE_URL}/v1",
+			"ENV":     "${STAGE}",
+		},
+	}
+
+	se.ExpandStep(step)
+
+	if step.Environment["API_URL"] != "https://api.example.com/v1" {
+		t.Errorf("Environment[API_URL] = %q, want %q", step.Environment["API_URL"], "https://api.example.com/v1")
+	}
+	if step.Environment["ENV"] != "staging" {
+		t.Errorf("Environment[ENV] = %q, want %q", step.Environment["ENV"], "staging")
+	}
+}
+
 func TestScriptEngine_ExpandStep_StopAppStep(t *testing.T) {
 	se := NewScriptEngine()
 	defer se.Close()

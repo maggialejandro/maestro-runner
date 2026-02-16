@@ -503,6 +503,14 @@ func (se *ScriptEngine) ExpandStep(step flow.Step) {
 		s.Selector = *se.expandSelector(&s.Selector)
 	case *flow.LaunchAppStep:
 		s.AppID = se.ExpandVariables(s.AppID)
+		for k, v := range s.Arguments {
+			if str, ok := v.(string); ok {
+				s.Arguments[k] = se.ExpandVariables(str)
+			}
+		}
+		for k, v := range s.Environment {
+			s.Environment[k] = se.ExpandVariables(v)
+		}
 	case *flow.StopAppStep:
 		s.AppID = se.ExpandVariables(s.AppID)
 	case *flow.KillAppStep:

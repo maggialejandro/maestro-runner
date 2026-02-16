@@ -1738,6 +1738,244 @@ func TestLaunchAppWithUDIDExplicitPermissions(t *testing.T) {
 	}
 }
 
+// TestLaunchAppNoSessionWithArguments tests that arguments are passed even when
+// no session exists (session is created, then app is relaunched with args).
+func TestLaunchAppNoSessionWithArguments(t *testing.T) {
+	var sessionCreated bool
+	var launchBody map[string]interface{}
+	var terminateCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		if path == "/session" && r.Method == "POST" {
+			sessionCreated = true
+			jsonResponse(w, map[string]interface{}{
+				"value": map[string]interface{}{"sessionId": "new-session-123"},
+			})
+			return
+		}
+		if strings.Contains(path, "/wda/apps/terminate") {
+			terminateCalled = true
+			jsonResponse(w, map[string]interface{}{"status": 0})
+			return
+		}
+		if strings.Contains(path, "/wda/apps/launch") {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &launchBody)
+			jsonResponse(w, map[string]interface{}{"status": 0})
+			return
+		}
+		jsonResponse(w, map[string]interface{}{"status": 0})
+	}))
+	defer server.Close()
+
+	// No sessionID → forces session creation path
+	client := &Client{baseURL: server.URL, httpClient: http.DefaultClient}
+	driver := &Driver{
+		client: client,
+		info:   &core.PlatformInfo{Platform: "ios"},
+	}
+
+	step := &flow.LaunchAppStep{
+		AppID:     "com.test.app",
+		Arguments: map[string]interface{}{"token": "abc123"},
+	}
+	result := driver.launchApp(step)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Message)
+	}
+	if !sessionCreated {
+		t.Error("Expected CreateSession to be called")
+	}
+	if !terminateCalled {
+		t.Error("Expected TerminateApp to be called before relaunch with args")
+	}
+	if launchBody == nil {
+		t.Fatal("Expected LaunchAppWithArgs to be called")
+	}
+	args, ok := launchBody["arguments"].([]interface{})
+	if !ok {
+		t.Fatal("Expected arguments in launch body")
+	}
+	if len(args) != 2 {
+		t.Errorf("Expected 2 launch arguments (-key value), got %d", len(args))
+	}
+}
+
+// TestLaunchAppArgumentsPassedAsEnvironment tests that arguments are also
+// set as environment variables in the WDA launch request.
+func TestLaunchAppArgumentsPassedAsEnvironment(t *testing.T) {
+	var launchBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/wda/apps/launch") {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &launchBody)
+		}
+		jsonResponse(w, map[string]interface{}{"status": 0})
+	}))
+	defer server.Close()
+	driver := createTestDriver(server)
+
+	step := &flow.LaunchAppStep{
+		AppID:     "com.test.app",
+		Arguments: map[string]interface{}{"debug": "true", "level": 42},
+	}
+	result := driver.launchApp(step)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Message)
+	}
+	env, ok := launchBody["environment"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected environment in launch body")
+	}
+	if env["debug"] != "true" {
+		t.Errorf("Expected environment[debug]='true', got %v", env["debug"])
+	}
+	if env["level"] != "42" {
+		t.Errorf("Expected environment[level]='42', got %v", env["level"])
+	}
+}
+
+// TestLaunchAppNoSessionNoArguments tests that when no args are provided
+// and no session exists, the app is launched via session creation only
+// (no unnecessary terminate+relaunch).
+func TestLaunchAppNoSessionNoArguments(t *testing.T) {
+	var sessionCreated bool
+	var launchCalled bool
+	var terminateCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		if path == "/session" && r.Method == "POST" {
+			sessionCreated = true
+			jsonResponse(w, map[string]interface{}{
+				"value": map[string]interface{}{"sessionId": "new-session-123"},
+			})
+			return
+		}
+		if strings.Contains(path, "/wda/apps/launch") {
+			launchCalled = true
+		}
+		if strings.Contains(path, "/wda/apps/terminate") {
+			terminateCalled = true
+		}
+		jsonResponse(w, map[string]interface{}{"status": 0})
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, httpClient: http.DefaultClient}
+	driver := &Driver{
+		client: client,
+		info:   &core.PlatformInfo{Platform: "ios"},
+	}
+
+	step := &flow.LaunchAppStep{AppID: "com.test.app"}
+	result := driver.launchApp(step)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Message)
+	}
+	if !sessionCreated {
+		t.Error("Expected CreateSession to be called")
+	}
+	if launchCalled {
+		t.Error("Did not expect LaunchAppWithArgs when no arguments provided")
+	}
+	if terminateCalled {
+		t.Error("Did not expect TerminateApp when no arguments provided")
+	}
+}
+
+// TestLaunchAppWithEnvironment tests that the new environment field
+// is passed as launchEnvironment to WDA.
+func TestLaunchAppWithEnvironment(t *testing.T) {
+	var launchBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/wda/apps/launch") {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &launchBody)
+		}
+		jsonResponse(w, map[string]interface{}{"status": 0})
+	}))
+	defer server.Close()
+	driver := createTestDriver(server)
+
+	step := &flow.LaunchAppStep{
+		AppID: "com.test.app",
+		Environment: map[string]string{
+			"API_URL": "https://api.example.com",
+			"ENV":     "staging",
+		},
+	}
+	result := driver.launchApp(step)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Message)
+	}
+	if launchBody == nil {
+		t.Fatal("Expected LaunchAppWithArgs to be called")
+	}
+	env, ok := launchBody["environment"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected environment in launch body")
+	}
+	if env["API_URL"] != "https://api.example.com" {
+		t.Errorf("Expected API_URL='https://api.example.com', got %v", env["API_URL"])
+	}
+	if env["ENV"] != "staging" {
+		t.Errorf("Expected ENV='staging', got %v", env["ENV"])
+	}
+}
+
+// TestLaunchAppWithArgumentsAndEnvironment tests that both arguments and
+// environment are merged correctly, with environment taking precedence.
+func TestLaunchAppWithArgumentsAndEnvironment(t *testing.T) {
+	var launchBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/wda/apps/launch") {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &launchBody)
+		}
+		jsonResponse(w, map[string]interface{}{"status": 0})
+	}))
+	defer server.Close()
+	driver := createTestDriver(server)
+
+	step := &flow.LaunchAppStep{
+		AppID: "com.test.app",
+		Arguments: map[string]interface{}{
+			"debug": "true",
+		},
+		Environment: map[string]string{
+			"API_URL": "https://api.example.com",
+		},
+	}
+	result := driver.launchApp(step)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Message)
+	}
+	env, ok := launchBody["environment"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected environment in launch body")
+	}
+	// arguments should be in environment
+	if env["debug"] != "true" {
+		t.Errorf("Expected debug='true' from arguments, got %v", env["debug"])
+	}
+	// explicit environment should be present
+	if env["API_URL"] != "https://api.example.com" {
+		t.Errorf("Expected API_URL='https://api.example.com', got %v", env["API_URL"])
+	}
+}
+
 // =============================================================================
 // tapOn additional tests
 // =============================================================================

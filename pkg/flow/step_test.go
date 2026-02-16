@@ -287,6 +287,7 @@ func TestLaunchAppStep_Fields(t *testing.T) {
 		StopApp:       &boolFalse,
 		Permissions:   map[string]string{"camera": "allow", "location": "deny"},
 		Arguments:     map[string]any{"debug": true, "env": "test"},
+		Environment:   map[string]string{"API_URL": "https://api.example.com", "ENV": "staging"},
 	}
 
 	if s.AppID != "com.example.app" {
@@ -306,6 +307,15 @@ func TestLaunchAppStep_Fields(t *testing.T) {
 	}
 	if len(s.Arguments) != 2 {
 		t.Errorf("len(Arguments)=%d, want 2", len(s.Arguments))
+	}
+	if len(s.Environment) != 2 {
+		t.Errorf("len(Environment)=%d, want 2", len(s.Environment))
+	}
+	if s.Environment["API_URL"] != "https://api.example.com" {
+		t.Errorf("Environment[API_URL]=%q, want https://api.example.com", s.Environment["API_URL"])
+	}
+	if s.Environment["ENV"] != "staging" {
+		t.Errorf("Environment[ENV]=%q, want staging", s.Environment["ENV"])
 	}
 }
 
