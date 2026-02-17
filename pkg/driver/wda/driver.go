@@ -527,8 +527,15 @@ func (d *Driver) getElementInfo(elemID string) (*core.ElementInfo, error) {
 		info.Bounds = core.Bounds{X: x, Y: y, Width: w, Height: h}
 	}
 
+	// Check if element is visible on screen via WDA's /element/{id}/displayed.
+	// This queries Apple's accessibility framework (FB_XCAXAIsVisibleAttribute)
+	// with a fresh snapshot each time — no stale cache.
+	// Reject off-screen elements so callers don't interact with invisible UI.
 	if displayed, err := d.client.ElementDisplayed(elemID); err == nil {
-		info.Visible = displayed
+		if !displayed {
+			return nil, fmt.Errorf("element exists but is not visible on screen")
+		}
+		info.Visible = true
 	}
 
 	info.Enabled = true // WDA doesn't have separate enabled check
@@ -620,6 +627,15 @@ func (d *Driver) resolveRelativeSelector(sel flow.Selector, allElements []*Parse
 		candidates = FilterContainsDescendants(candidates, allElements, sel.ContainsDescendants)
 	}
 
+	// Filter out off-screen elements
+	visible := candidates[:0]
+	for _, c := range candidates {
+		if c.Displayed {
+			visible = append(visible, c)
+		}
+	}
+	candidates = visible
+
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no elements match selector")
 	}
@@ -665,6 +681,17 @@ func (d *Driver) findElementByPageSourceOnce(sel flow.Selector) (*core.ElementIn
 	}
 
 	candidates := FilterBySelector(allElements, sel)
+
+	// Filter out off-screen elements — page source XML includes elements
+	// from the full accessibility tree, not just the visible viewport.
+	visible := candidates[:0]
+	for _, c := range candidates {
+		if c.Displayed {
+			visible = append(visible, c)
+		}
+	}
+	candidates = visible
+
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no elements match selector")
 	}

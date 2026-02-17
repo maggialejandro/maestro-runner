@@ -4195,6 +4195,10 @@ func TestWaitForAnimationToEndErrorPath(t *testing.T) {
 func TestTapOnWithID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/element") && strings.Contains(r.URL.Path, "/displayed") {
+			jsonResponse(w, map[string]interface{}{"value": true})
+			return
+		}
 		if strings.Contains(r.URL.Path, "/element") && strings.Contains(r.URL.Path, "/rect") {
 			jsonResponse(w, map[string]interface{}{
 				"value": map[string]interface{}{
@@ -4286,6 +4290,10 @@ func TestTapOnOptionalNotFound(t *testing.T) {
 func TestTapOnWithElementIDClickFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/element") && strings.Contains(r.URL.Path, "/displayed") {
+			jsonResponse(w, map[string]interface{}{"value": true})
+			return
+		}
 		if strings.Contains(r.URL.Path, "/element") && strings.Contains(r.URL.Path, "/click") {
 			jsonResponse(w, map[string]interface{}{
 				"value": map[string]interface{}{
@@ -4607,6 +4615,10 @@ func TestFindElementByWDAWithText(t *testing.T) {
 			jsonResponse(w, map[string]interface{}{
 				"value": map[string]interface{}{"ELEMENT": "elem1"},
 			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/displayed") {
+			jsonResponse(w, map[string]interface{}{"value": true})
 			return
 		}
 		if strings.Contains(r.URL.Path, "/rect") {
