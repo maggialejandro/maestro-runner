@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-02-17
+
+### Fixed
+- iOS WDA: off-screen elements no longer returned by `findElement` — `assertVisible`, `tapOn`, `scrollUntilVisible`, and all element commands now correctly reject elements not visible in the viewport
+- iOS WDA: `scrollUntilVisible` no longer skips scrolling when the target element exists in the accessibility tree but is off-screen
+- iOS WDA: `scrollUntilVisible` direction matching is now case-insensitive (e.g., `direction: "DOWN"` works)
+- iOS WDA: `waitForIdleTimeout` now works on iOS via WDA quiescence
+- `when: platform` condition was ignored in `runFlow` blocks ([#8](https://github.com/devicelab-dev/maestro-runner/issues/8))
+
+### Contributors
+
+[@janfreund](https://github.com/janfreund)
+1. Reported `scrollUntilVisible` and element visibility issues on iOS ([#2](https://github.com/devicelab-dev/maestro-runner/issues/2))
+
+[@kavithamahesh](https://github.com/kavithamahesh)
+1. Reported `when: platform` condition being ignored ([#8](https://github.com/devicelab-dev/maestro-runner/issues/8))
+
 ## [1.0.5] - 2026-02-16
 
 ### Added
