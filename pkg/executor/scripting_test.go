@@ -1045,6 +1045,65 @@ func TestScriptEngine_ExpandStep_ClearStateStep(t *testing.T) {
 	}
 }
 
+// TestScriptEngine_FlowConfigAppID_WithCLIEnv reproduces the bug where
+// flow config `appId: ${APP_ID}` overwrites the CLI -e value with the literal.
+// The fix: expand the config appId before setting it as a variable.
+func TestScriptEngine_FlowConfigAppID_WithCLIEnv(t *testing.T) {
+	se := NewScriptEngine()
+	defer se.Close()
+
+	// Step 1: CLI -e sets APP_ID (simulates fr.script.SetVariables(fr.config.Env))
+	se.SetVariable("APP_ID", "com.testhiveapp")
+
+	// Step 2: Flow config has appId: ${APP_ID}
+	// The fix: expand BEFORE setting as variable (simulates flow_runner.go:69-71)
+	flowConfigAppID := "${APP_ID}"
+	expanded := se.ExpandVariables(flowConfigAppID)
+	se.SetVariable("APP_ID", expanded)
+
+	// Verify the variable resolves to the CLI value, not the literal
+	if expanded != "com.testhiveapp" {
+		t.Errorf("ExpandVariables(\"${APP_ID}\") = %q, want %q", expanded, "com.testhiveapp")
+	}
+
+	// Step 3: Verify clearState step gets the expanded value
+	step := &flow.ClearStateStep{AppID: ""}
+	// Simulate: if step.AppID is empty, flow config appId is injected
+	if step.AppID == "" {
+		step.AppID = expanded // this is what flow_runner does after the fix
+	}
+	se.ExpandStep(step)
+
+	if step.AppID != "com.testhiveapp" {
+		t.Errorf("ClearStateStep.AppID = %q, want %q", step.AppID, "com.testhiveapp")
+	}
+}
+
+// TestScriptEngine_FlowConfigAppID_Hardcoded verifies that a hardcoded appId
+// in flow config still works and takes precedence over CLI -e.
+func TestScriptEngine_FlowConfigAppID_Hardcoded(t *testing.T) {
+	se := NewScriptEngine()
+	defer se.Close()
+
+	// CLI -e sets APP_ID
+	se.SetVariable("APP_ID", "com.from.cli")
+
+	// Flow config has a hardcoded appId (no variable reference)
+	flowConfigAppID := "com.hardcoded.app"
+	expanded := se.ExpandVariables(flowConfigAppID)
+	se.SetVariable("APP_ID", expanded)
+
+	// Hardcoded value should take precedence
+	if expanded != "com.hardcoded.app" {
+		t.Errorf("expanded = %q, want %q", expanded, "com.hardcoded.app")
+	}
+
+	got := se.ExpandVariables("${APP_ID}")
+	if got != "com.hardcoded.app" {
+		t.Errorf("APP_ID = %q, want %q", got, "com.hardcoded.app")
+	}
+}
+
 func TestScriptEngine_ExpandStep_OpenLinkStep(t *testing.T) {
 	se := NewScriptEngine()
 	defer se.Close()

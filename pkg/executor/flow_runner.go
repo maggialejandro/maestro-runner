@@ -66,8 +66,11 @@ func (fr *FlowRunner) Run() FlowResult {
 	}
 
 	// Apply flow config variables (takes precedence over CLI env)
+	// Expand the appId first so that `appId: ${APP_ID}` resolves using CLI -e values
 	if fr.flow.Config.AppID != "" {
-		fr.script.SetVariable("APP_ID", fr.flow.Config.AppID)
+		expanded := fr.script.ExpandVariables(fr.flow.Config.AppID)
+		fr.flow.Config.AppID = expanded
+		fr.script.SetVariable("APP_ID", expanded)
 	}
 	fr.script.SetVariables(fr.flow.Config.Env)
 

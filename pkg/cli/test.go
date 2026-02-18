@@ -54,10 +54,10 @@ Examples:
   maestro-runner test login.yaml checkout.yaml
 
   # With environment variables
-  maestro-runner test flows/ -e USER=test -e PASS=secret
+  maestro-runner test -e USER=test -e PASS=secret flows/
 
   # With tag filtering
-  maestro-runner test flows/ --include-tags smoke
+  maestro-runner test --include-tags smoke flows/
 
   # With Appium and capabilities file
   maestro-runner --driver appium --caps caps.json test flow.yaml
@@ -66,7 +66,7 @@ Examples:
   maestro-runner --driver appium --appium-url "https://hub.provider.com/wd/hub" --caps cloud.json test flow.yaml
 
   # Custom output directory
-  maestro-runner test flows/ --output ./my-reports --flatten`,
+  maestro-runner test --output ./my-reports --flatten flows/`,
 	Flags: []cli.Flag{
 		// Configuration
 		&cli.StringFlag{
