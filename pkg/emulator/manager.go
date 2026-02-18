@@ -75,7 +75,8 @@ func (m *Manager) StartWithRetry(avdName string, timeout time.Duration, maxAttem
 	return "", fmt.Errorf("failed to start emulator after %d attempts: %w", maxAttempts, lastErr)
 }
 
-// AllocatePort returns the port for an AVD (from mapping or next available)
+// AllocatePort returns the port for an AVD (from mapping or next available).
+// Skips ports already occupied by running emulators.
 func (m *Manager) AllocatePort(avdName string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -86,12 +87,19 @@ func (m *Manager) AllocatePort(avdName string) int {
 		return port
 	}
 
+	// Build set of occupied ports (session + already-running emulators)
+	occupied := make(map[int]bool)
+	for _, port := range m.portMap {
+		occupied[port] = true
+	}
+	for _, port := range RunningEmulatorPorts() {
+		occupied[port] = true
+	}
+
 	// Find next available port
 	nextPort := startingPort
-	for _, port := range m.portMap {
-		if port >= nextPort {
-			nextPort = port + 2 // Always increment by 2 (even numbers)
-		}
+	for occupied[nextPort] {
+		nextPort += 2 // Even numbers only
 	}
 
 	// Save allocation immediately to prevent race conditions

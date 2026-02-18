@@ -198,11 +198,21 @@ func findBootedSimulator() (string, error) {
 		return "", fmt.Errorf("no devices in simctl output")
 	}
 
-	for _, deviceList := range devices {
+	for runtime, deviceList := range devices {
+		// Only consider iOS simulators — skip tvOS, watchOS, visionOS
+		if !strings.Contains(runtime, "iOS-") {
+			continue
+		}
 		if list, ok := deviceList.([]interface{}); ok {
 			for _, device := range list {
 				if deviceMap, ok := device.(map[string]interface{}); ok {
 					if udid, ok := deviceMap["udid"].(string); ok && udid != "" {
+						// Skip simulators whose WDA port is already in use
+						port := wdadriver.PortFromUDID(udid)
+						if isPortInUse(port) {
+							logger.Info("Skipping booted simulator %s: port %d in use", udid, port)
+							continue
+						}
 						return udid, nil
 					}
 				}
@@ -210,7 +220,7 @@ func findBootedSimulator() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no booted simulator found")
+	return "", fmt.Errorf("no available booted iOS simulator found")
 }
 
 // findConnectedDevice finds a connected physical iOS device using go-ios.
@@ -414,42 +424,51 @@ func getIOSAppVersion(udid, bundleID string) string {
 	return strings.TrimSpace(version)
 }
 
-// autoDetectIOSDevices finds N available iOS simulators/devices.
+// autoDetectIOSDevices finds up to N available booted iOS simulators that are not in use.
+// Excludes tvOS, watchOS, visionOS simulators and simulators whose WDA port is already bound.
+// Returns available devices (may be fewer than count) and an error only if zero found.
 func autoDetectIOSDevices(count int) ([]string, error) {
-	// List booted simulators
 	out, err := runCommand("xcrun", "simctl", "list", "devices", "booted", "-j")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list iOS devices: %w", err)
 	}
 
-	// Parse JSON to find booted device UDIDs
+	var data struct {
+		Devices map[string][]struct {
+			UDID string `json:"udid"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal([]byte(out), &data); err != nil {
+		return nil, fmt.Errorf("failed to parse simctl output: %w", err)
+	}
+
 	var devices []string
-	lines := strings.Split(out, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, `"udid"`) {
-			// Extract UDID from "udid" : "XXXX-XXXX"
-			parts := strings.Split(line, ":")
-			if len(parts) >= 2 {
-				udid := strings.Trim(parts[1], ` ",`)
-				if udid != "" {
-					devices = append(devices, udid)
-				}
+	for runtime, devList := range data.Devices {
+		// Only consider iOS simulators
+		if !strings.Contains(runtime, "iOS-") {
+			continue
+		}
+		for _, dev := range devList {
+			if dev.UDID == "" {
+				continue
 			}
+			// Skip simulators whose WDA port is already in use
+			port := wdadriver.PortFromUDID(dev.UDID)
+			if isPortInUse(port) {
+				logger.Info("Skipping booted simulator %s: port %d in use", dev.UDID, port)
+				continue
+			}
+			devices = append(devices, dev.UDID)
 		}
 	}
 
 	if len(devices) == 0 {
-		return nil, fmt.Errorf("no booted iOS simulators found\nHint: Start %d simulator(s) or specify devices with --device", count)
+		return nil, fmt.Errorf("no available booted iOS simulators found\nHint: Start %d simulator(s) or specify devices with --device", count)
 	}
 
 	// Return up to count devices
 	if len(devices) > count {
 		devices = devices[:count]
-	}
-
-	if len(devices) < count {
-		return nil, fmt.Errorf("found %d booted simulators but need %d\nHint: Start more simulators or use --parallel %d", len(devices), count, len(devices))
 	}
 
 	return devices, nil

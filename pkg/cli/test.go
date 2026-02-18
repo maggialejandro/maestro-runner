@@ -346,22 +346,38 @@ func handleSimulatorStartup(cfg *RunConfig, mgr *simulator.Manager) error {
 			return nil
 		}
 
-		// No booted simulators — find one to start
-		logger.Info("No booted simulators found, auto-starting...")
-		fmt.Printf("  %s⏳ No simulators found, auto-starting...%s\n", color(colorCyan), color(colorReset))
+		// No booted simulators — find an iOS one to start
+		logger.Info("No booted iOS simulators found, auto-starting...")
+		fmt.Printf("  %s⏳ No iOS simulators found, auto-starting...%s\n", color(colorCyan), color(colorReset))
 
-		shutdownSims, err := simulator.ListShutdownSimulators()
-		if err != nil || len(shutdownSims) == 0 {
-			return fmt.Errorf("no simulators available; create one with: xcrun simctl create <name> <device-type> <runtime>")
-		}
+		shutdownSims, err := simulator.ListShutdownIOSSimulators()
+		if err == nil && len(shutdownSims) > 0 {
+			// Boot an existing shutdown simulator
+			target := shutdownSims[0]
+			logger.Info("Starting simulator: %s (%s)", target.Name, target.UDID)
+			fmt.Printf("  %s⏳ Starting simulator: %s%s\n", color(colorCyan), target.Name, color(colorReset))
 
-		target := shutdownSims[0]
-		logger.Info("Starting simulator: %s (%s)", target.Name, target.UDID)
-		fmt.Printf("  %s⏳ Starting simulator: %s%s\n", color(colorCyan), target.Name, color(colorReset))
+			udid, err = mgr.Start(target.UDID, timeout)
+			if err != nil {
+				return fmt.Errorf("failed to auto-start simulator %s: %w", target.Name, err)
+			}
+		} else {
+			// No shutdown simulators available — create a new one
+			logger.Info("No shutdown iOS simulators, creating a new one...")
 
-		udid, err = mgr.Start(target.UDID, timeout)
-		if err != nil {
-			return fmt.Errorf("failed to auto-start simulator %s: %w", target.Name, err)
+			iosRuntime, err := simulator.LatestIOSRuntime()
+			if err != nil {
+				return fmt.Errorf("no iOS simulators available and cannot create one: %w", err)
+			}
+
+			deviceType := iosRuntime.DeviceTypes[0]
+			simName := "maestro-runner-1"
+			fmt.Printf("  %s⏳ Creating simulator: %s (iOS %s)%s\n", color(colorCyan), simName, iosRuntime.Version, color(colorReset))
+
+			udid, err = mgr.CreateAndStart(simName, deviceType, iosRuntime.Identifier, timeout)
+			if err != nil {
+				return fmt.Errorf("failed to create simulator: %w", err)
+			}
 		}
 
 		fmt.Printf("  %s✓ Simulator started: %s%s\n", color(colorGreen), udid, color(colorReset))
@@ -907,16 +923,17 @@ func determineExecutionMode(cfg *RunConfig, emulatorMgr *emulator.Manager, simul
 		if len(cfg.Devices) > 0 {
 			deviceIDs = cfg.Devices
 		} else if cfg.Parallel > 0 {
-			// Try to auto-detect existing devices
+			// Try to auto-detect existing available devices (not in use)
 			existingDevices, detectErr := autoDetectDevices(cfg.Platform, cfg.Parallel)
 			if detectErr != nil && !cfg.AutoStartEmulator {
 				// No devices and auto-start disabled - show helpful error
 				return false, nil, buildParallelDeviceError(cfg, 0)
 			}
 
-			// Start with existing devices (may be empty if none found)
-			if detectErr == nil {
+			// Start with existing devices (may be fewer than requested)
+			if len(existingDevices) > 0 {
 				deviceIDs = existingDevices
+				logger.Info("Found %d available booted device(s)", len(deviceIDs))
 			}
 
 			// Check if we need more devices
@@ -924,15 +941,27 @@ func determineExecutionMode(cfg *RunConfig, emulatorMgr *emulator.Manager, simul
 			if needed > 0 && cfg.AutoStartEmulator && (cfg.Platform == "" || cfg.Platform == "android") {
 				logger.Info("Need %d more devices for --parallel %d, starting emulators...", needed, cfg.Parallel)
 
-				// List available AVDs and validate count before printing progress
+				// List available AVDs and filter out those already running
 				avds, err := emulator.ListAVDs()
 				if err != nil {
 					return false, nil, fmt.Errorf("failed to list AVDs: %w", err)
 				}
-				if len(avds) == 0 {
-					return false, nil, fmt.Errorf("need %d more devices but no AVDs available; create AVDs with: avdmanager create avd", needed)
+				// Filter out AVDs whose emulators are already running —
+				// same AVD cannot run twice (lock conflict).
+				runningNames := emulator.RunningAVDNames()
+				var stoppedAVDs []emulator.AVDInfo
+				for _, avd := range avds {
+					if !runningNames[avd.Name] {
+						stoppedAVDs = append(stoppedAVDs, avd)
+					}
 				}
-				// Require enough unique AVDs -- same AVD cannot run twice (lock conflict)
+				avds = stoppedAVDs
+				if len(avds) == 0 {
+					return false, nil, fmt.Errorf("need %d more device(s) but no stopped AVDs available\n"+
+						"All %d AVD(s) are already running (%d available, %d in use).\n"+
+						"Hint: create more AVDs with: avdmanager create avd",
+						needed, len(runningNames), len(deviceIDs), len(runningNames)-len(deviceIDs))
+				}
 				if len(avds) < needed {
 					fmt.Println()
 					return false, nil, buildNotEnoughAVDsError(cfg, len(deviceIDs), avds)
@@ -966,27 +995,27 @@ func determineExecutionMode(cfg *RunConfig, emulatorMgr *emulator.Manager, simul
 			} else if needed > 0 && cfg.AutoStartEmulator && cfg.Platform == "ios" {
 				// iOS simulator parallel startup
 				logger.Info("Need %d more iOS simulators for --parallel %d", needed, cfg.Parallel)
+				timeout := bootTimeout(cfg)
 
-				shutdownSims, err := simulator.ListShutdownSimulators()
+				// Phase 1: Boot existing shutdown iOS simulators
+				shutdownSims, err := simulator.ListShutdownIOSSimulators()
 				if err != nil {
 					return false, nil, fmt.Errorf("failed to list simulators: %w", err)
 				}
-				if len(shutdownSims) < needed {
-					return false, nil, fmt.Errorf(
-						"--parallel %d needs %d simulator(s) but only %d shutdown simulator(s) available\n\n"+
-							"Options:\n"+
-							"  1. Create more simulators: xcrun simctl create <name> <device-type> <runtime>\n"+
-							"  2. Shutdown running simulators: xcrun simctl shutdown all",
-						cfg.Parallel, needed, len(shutdownSims))
+
+				bootable := len(shutdownSims)
+				if bootable > needed {
+					bootable = needed
 				}
 
-				fmt.Printf("  %s⏳ Starting %d simulator(s) for parallel execution...%s\n", color(colorCyan), needed, color(colorReset))
-				timeout := bootTimeout(cfg)
+				if bootable > 0 {
+					fmt.Printf("  %s⏳ Starting %d existing simulator(s)...%s\n", color(colorCyan), bootable, color(colorReset))
+				}
 
-				for i := 0; i < needed; i++ {
+				for i := 0; i < bootable; i++ {
 					sim := shutdownSims[i]
-					logger.Info("Starting simulator %d/%d: %s (%s)", i+1, needed, sim.Name, sim.UDID)
-					fmt.Printf("  %s⏳ Starting simulator %d/%d: %s%s\n", color(colorCyan), i+1, needed, sim.Name, color(colorReset))
+					logger.Info("Starting simulator %d/%d: %s (%s)", i+1, bootable, sim.Name, sim.UDID)
+					fmt.Printf("  %s⏳ Starting simulator %d/%d: %s%s\n", color(colorCyan), i+1, bootable, sim.Name, color(colorReset))
 
 					udid, err := simulatorMgr.Start(sim.UDID, timeout)
 					if err != nil {
@@ -998,8 +1027,46 @@ func determineExecutionMode(cfg *RunConfig, emulatorMgr *emulator.Manager, simul
 					}
 
 					deviceIDs = append(deviceIDs, udid)
-					logger.Info("Simulator started: %s (%d/%d)", sim.Name, i+1, needed)
+					logger.Info("Simulator started: %s (%d/%d)", sim.Name, i+1, bootable)
 					fmt.Printf("  %s✓ Simulator started: %s (%s)%s\n", color(colorGreen), sim.Name, udid, color(colorReset))
+				}
+
+				// Phase 2: Create new simulators if still not enough
+				stillNeeded := cfg.Parallel - len(deviceIDs)
+				if stillNeeded > 0 {
+					logger.Info("Still need %d more simulator(s), creating new ones", stillNeeded)
+
+					iosRuntime, err := simulator.LatestIOSRuntime()
+					if err != nil {
+						if shutdownErr := simulatorMgr.ShutdownAll(); shutdownErr != nil {
+							logger.Error("Failed to cleanup simulators: %v", shutdownErr)
+						}
+						return false, nil, fmt.Errorf("cannot create simulators: %w", err)
+					}
+
+					fmt.Printf("  %s⏳ Creating %d new simulator(s) (iOS %s)...%s\n", color(colorCyan), stillNeeded, iosRuntime.Version, color(colorReset))
+
+					for i := 0; i < stillNeeded; i++ {
+						// Pick a device type (cycle through available iPhones)
+						deviceType := iosRuntime.DeviceTypes[i%len(iosRuntime.DeviceTypes)]
+						simName := fmt.Sprintf("maestro-runner-%d", i+1)
+
+						logger.Info("Creating simulator %d/%d: %s (%s)", i+1, stillNeeded, simName, deviceType)
+						fmt.Printf("  %s⏳ Creating simulator %d/%d: %s%s\n", color(colorCyan), i+1, stillNeeded, simName, color(colorReset))
+
+						udid, err := simulatorMgr.CreateAndStart(simName, deviceType, iosRuntime.Identifier, timeout)
+						if err != nil {
+							logger.Error("Failed to create simulator %d/%d, cleaning up", i+1, stillNeeded)
+							if shutdownErr := simulatorMgr.ShutdownAll(); shutdownErr != nil {
+								logger.Error("Failed to cleanup simulators: %v", shutdownErr)
+							}
+							return false, nil, fmt.Errorf("failed to create simulator: %w", err)
+						}
+
+						deviceIDs = append(deviceIDs, udid)
+						logger.Info("Simulator created and started: %s (%d/%d)", udid, i+1, stillNeeded)
+						fmt.Printf("  %s✓ Simulator created: %s (%s)%s\n", color(colorGreen), simName, udid, color(colorReset))
+					}
 				}
 			} else if needed > 0 {
 				// Need more devices but auto-start is disabled - build helpful error

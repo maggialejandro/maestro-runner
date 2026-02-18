@@ -98,6 +98,165 @@ func TestExtractOSVersion(t *testing.T) {
 	}
 }
 
+func TestExtractPlatform(t *testing.T) {
+	tests := []struct {
+		runtime string
+		want    string
+	}{
+		{"com.apple.CoreSimulator.SimRuntime.iOS-17-2", "iOS"},
+		{"com.apple.CoreSimulator.SimRuntime.iOS-18-0", "iOS"},
+		{"com.apple.CoreSimulator.SimRuntime.tvOS-17-0", "tvOS"},
+		{"com.apple.CoreSimulator.SimRuntime.watchOS-10-2", "watchOS"},
+		{"com.apple.CoreSimulator.SimRuntime.xrOS-1-0", "xrOS"},
+		{"unknown-runtime", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.runtime, func(t *testing.T) {
+			got := extractPlatform(tt.runtime)
+			if got != tt.want {
+				t.Errorf("extractPlatform(%q) = %q, want %q", tt.runtime, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestListSimulators_PopulatesPlatform(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("iOS simulator tests require macOS")
+	}
+
+	sims, err := ListSimulators()
+	if err != nil {
+		t.Fatalf("ListSimulators() error: %v", err)
+	}
+
+	for _, sim := range sims {
+		if sim.Platform == "" {
+			t.Errorf("SimulatorDevice %q (%s) has empty Platform (runtime: %s)", sim.Name, sim.UDID, sim.Runtime)
+		}
+	}
+}
+
+func TestListIOSSimulators_FiltersNonIOS(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("iOS simulator tests require macOS")
+	}
+
+	iosSims, err := ListIOSSimulators()
+	if err != nil {
+		t.Fatalf("ListIOSSimulators() error: %v", err)
+	}
+
+	for _, sim := range iosSims {
+		if sim.Platform != "iOS" {
+			t.Errorf("ListIOSSimulators() returned non-iOS sim: %q platform=%q runtime=%s", sim.Name, sim.Platform, sim.Runtime)
+		}
+	}
+
+	// Verify it returns fewer or equal results compared to ListSimulators
+	allSims, err := ListSimulators()
+	if err != nil {
+		t.Fatalf("ListSimulators() error: %v", err)
+	}
+
+	if len(iosSims) > len(allSims) {
+		t.Errorf("ListIOSSimulators() returned %d sims but ListSimulators() returned %d", len(iosSims), len(allSims))
+	}
+}
+
+func TestListShutdownIOSSimulators_FiltersNonIOS(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("iOS simulator tests require macOS")
+	}
+
+	sims, err := ListShutdownIOSSimulators()
+	if err != nil {
+		t.Fatalf("ListShutdownIOSSimulators() error: %v", err)
+	}
+
+	for _, sim := range sims {
+		if sim.Platform != "iOS" {
+			t.Errorf("ListShutdownIOSSimulators() returned non-iOS sim: %q platform=%q", sim.Name, sim.Platform)
+		}
+		if sim.State != "Shutdown" {
+			t.Errorf("ListShutdownIOSSimulators() returned sim with state %q", sim.State)
+		}
+	}
+}
+
+func TestLatestIOSRuntime_Integration(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("simctl requires macOS")
+	}
+
+	rt, err := LatestIOSRuntime()
+	if err != nil {
+		t.Fatalf("LatestIOSRuntime() error: %v", err)
+	}
+
+	if rt.Identifier == "" {
+		t.Error("LatestIOSRuntime().Identifier is empty")
+	}
+	if rt.Version == "" {
+		t.Error("LatestIOSRuntime().Version is empty")
+	}
+	if len(rt.DeviceTypes) == 0 {
+		t.Error("LatestIOSRuntime().DeviceTypes is empty")
+	}
+
+	// All device types should be iPhone identifiers
+	for _, dt := range rt.DeviceTypes {
+		if dt == "" {
+			t.Error("empty device type identifier")
+		}
+	}
+}
+
+func TestCreateAndDeleteSimulator_Integration(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("simctl requires macOS")
+	}
+
+	rt, err := LatestIOSRuntime()
+	if err != nil {
+		t.Fatalf("LatestIOSRuntime() error: %v", err)
+	}
+
+	// Create a simulator
+	udid, err := CreateSimulator("maestro-runner-test-tmp", rt.DeviceTypes[0], rt.Identifier)
+	if err != nil {
+		t.Fatalf("CreateSimulator() error: %v", err)
+	}
+	if udid == "" {
+		t.Fatal("CreateSimulator() returned empty UDID")
+	}
+
+	// Verify it appears in the list
+	sims, err := ListIOSSimulators()
+	if err != nil {
+		t.Fatalf("ListIOSSimulators() error: %v", err)
+	}
+	found := false
+	for _, sim := range sims {
+		if sim.UDID == udid {
+			found = true
+			if sim.Name != "maestro-runner-test-tmp" {
+				t.Errorf("created sim name = %q, want %q", sim.Name, "maestro-runner-test-tmp")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("created simulator %s not found in ListIOSSimulators()", udid)
+	}
+
+	// Clean up — delete it
+	if err := DeleteSimulator(udid); err != nil {
+		t.Fatalf("DeleteSimulator() error: %v", err)
+	}
+}
+
 func TestManager_NewManager(t *testing.T) {
 	mgr := NewManager()
 	if mgr == nil {

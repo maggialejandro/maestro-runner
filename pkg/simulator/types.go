@@ -5,11 +5,12 @@ import (
 	"time"
 )
 
-// SimulatorDevice represents an available iOS simulator from simctl list.
+// SimulatorDevice represents an available simulator from simctl list.
 type SimulatorDevice struct {
 	Name        string // e.g., "iPhone 15 Pro"
 	UDID        string // e.g., "A1B2C3D4-E5F6-..."
 	Runtime     string // e.g., "com.apple.CoreSimulator.SimRuntime.iOS-17-2"
+	Platform    string // e.g., "iOS", "tvOS", "watchOS", "xrOS"
 	OSVersion   string // e.g., "17.2" (extracted from Runtime)
 	State       string // "Shutdown", "Booted", etc.
 	IsAvailable bool
@@ -20,6 +21,7 @@ type SimulatorInstance struct {
 	UDID         string        // Simulator UDID
 	Name         string        // Simulator name (e.g., "iPhone 15 Pro")
 	StartedBy    string        // "maestro-runner"
+	CreatedByUs  bool          // true if we created this simulator (should delete on cleanup)
 	BootStart    time.Time     // When boot was initiated
 	BootDuration time.Duration // Total boot duration
 }

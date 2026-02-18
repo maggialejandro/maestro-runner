@@ -78,7 +78,42 @@ func (m *Manager) StartByName(name string, timeout time.Duration) (string, error
 	return "", fmt.Errorf("simulator not found: %s", name)
 }
 
+// CreateAndStart creates a new iOS simulator, boots it, and tracks it.
+// The simulator will be deleted on shutdown.
+func (m *Manager) CreateAndStart(name, deviceTypeID, runtimeID string, timeout time.Duration) (string, error) {
+	logger.Info("Creating simulator: %s (%s, %s)", name, deviceTypeID, runtimeID)
+
+	udid, err := CreateSimulator(name, deviceTypeID, runtimeID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create simulator: %w", err)
+	}
+
+	bootStart := time.Now()
+	if err := BootSimulator(udid, timeout); err != nil {
+		// Clean up the created simulator on boot failure
+		logger.Error("Boot failed for created simulator %s, deleting", udid)
+		if delErr := DeleteSimulator(udid); delErr != nil {
+			logger.Error("Failed to delete simulator %s after boot failure: %v", udid, delErr)
+		}
+		return "", fmt.Errorf("failed to boot simulator: %w", err)
+	}
+
+	instance := &SimulatorInstance{
+		UDID:         udid,
+		Name:         name,
+		StartedBy:    "maestro-runner",
+		CreatedByUs:  true,
+		BootStart:    bootStart,
+		BootDuration: time.Since(bootStart),
+	}
+	m.started.Store(udid, instance)
+
+	logger.Info("Created and started simulator: %s (%s, boot time: %v)", name, udid, instance.BootDuration)
+	return udid, nil
+}
+
 // Shutdown shuts down a simulator if we started it.
+// If the simulator was created by us, it is also deleted.
 func (m *Manager) Shutdown(udid string) error {
 	instance, exists := m.started.Load(udid)
 	if !exists {
@@ -98,6 +133,14 @@ func (m *Manager) Shutdown(udid string) error {
 	if inst, ok := instance.(*SimulatorInstance); ok {
 		inst.BootDuration = time.Since(inst.BootStart)
 		logger.Debug("Simulator %s ran for %v", udid, inst.BootDuration)
+
+		// Delete simulators we created
+		if inst.CreatedByUs {
+			logger.Info("Deleting created simulator: %s (%s)", inst.Name, udid)
+			if err := DeleteSimulator(udid); err != nil {
+				logger.Error("Failed to delete simulator %s: %v", udid, err)
+			}
+		}
 	}
 
 	return nil

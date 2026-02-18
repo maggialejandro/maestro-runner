@@ -50,6 +50,7 @@ func ListSimulators() ([]SimulatorDevice, error) {
 
 	var sims []SimulatorDevice
 	for runtime, devices := range data.Devices {
+		platform := extractPlatform(runtime)
 		osVersion := extractOSVersion(runtime)
 		for _, dev := range devices {
 			if !dev.IsAvailable {
@@ -59,6 +60,7 @@ func ListSimulators() ([]SimulatorDevice, error) {
 				Name:        dev.Name,
 				UDID:        dev.UDID,
 				Runtime:     runtime,
+				Platform:    platform,
 				OSVersion:   osVersion,
 				State:       dev.State,
 				IsAvailable: dev.IsAvailable,
@@ -70,9 +72,41 @@ func ListSimulators() ([]SimulatorDevice, error) {
 	return sims, nil
 }
 
+// ListIOSSimulators returns available iOS simulators only (excludes tvOS, watchOS, visionOS).
+func ListIOSSimulators() ([]SimulatorDevice, error) {
+	sims, err := ListSimulators()
+	if err != nil {
+		return nil, err
+	}
+
+	var iosSims []SimulatorDevice
+	for _, sim := range sims {
+		if sim.Platform == "iOS" {
+			iosSims = append(iosSims, sim)
+		}
+	}
+	return iosSims, nil
+}
+
 // ListShutdownSimulators returns available simulators that are currently shut down.
 func ListShutdownSimulators() ([]SimulatorDevice, error) {
 	sims, err := ListSimulators()
+	if err != nil {
+		return nil, err
+	}
+
+	var shutdown []SimulatorDevice
+	for _, sim := range sims {
+		if sim.State == "Shutdown" {
+			shutdown = append(shutdown, sim)
+		}
+	}
+	return shutdown, nil
+}
+
+// ListShutdownIOSSimulators returns iOS simulators that are currently shut down.
+func ListShutdownIOSSimulators() ([]SimulatorDevice, error) {
+	sims, err := ListIOSSimulators()
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +229,130 @@ func ShutdownSimulator(udid string, timeout time.Duration) error {
 	}
 
 	return fmt.Errorf("simulator shutdown timeout after %v", timeout)
+}
+
+// simctlRuntimesOutput represents the JSON output from xcrun simctl list runtimes.
+type simctlRuntimesOutput struct {
+	Runtimes []simctlRuntime `json:"runtimes"`
+}
+
+type simctlRuntime struct {
+	Identifier          string                   `json:"identifier"`
+	Version             string                   `json:"version"`
+	IsAvailable         bool                     `json:"isAvailable"`
+	SupportedDeviceTypes []simctlDeviceTypeEntry `json:"supportedDeviceTypes"`
+}
+
+type simctlDeviceTypeEntry struct {
+	Name          string `json:"name"`
+	Identifier    string `json:"identifier"`
+	ProductFamily string `json:"productFamily"`
+}
+
+// IOSRuntime describes an available iOS runtime and its supported iPhone device types.
+type IOSRuntime struct {
+	Identifier  string   // e.g., "com.apple.CoreSimulator.SimRuntime.iOS-17-2"
+	Version     string   // e.g., "17.2"
+	DeviceTypes []string // iPhone device type identifiers
+}
+
+// LatestIOSRuntime returns the latest available iOS runtime with its supported iPhone device types.
+func LatestIOSRuntime() (*IOSRuntime, error) {
+	if _, err := FindSimctlBinary(); err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("xcrun", "simctl", "list", "runtimes", "available", "-j")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runtimes: %w", err)
+	}
+
+	var data simctlRuntimesOutput
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse runtimes output: %w", err)
+	}
+
+	// Find the latest iOS runtime (last in list is typically newest)
+	var best *simctlRuntime
+	for i := range data.Runtimes {
+		rt := &data.Runtimes[i]
+		if !rt.IsAvailable || !strings.Contains(rt.Identifier, "SimRuntime.iOS-") {
+			continue
+		}
+		best = rt
+	}
+
+	if best == nil {
+		return nil, fmt.Errorf("no available iOS runtimes found")
+	}
+
+	// Collect iPhone device types
+	var deviceTypes []string
+	for _, dt := range best.SupportedDeviceTypes {
+		if dt.ProductFamily == "iPhone" {
+			deviceTypes = append(deviceTypes, dt.Identifier)
+		}
+	}
+
+	if len(deviceTypes) == 0 {
+		return nil, fmt.Errorf("no iPhone device types for runtime %s", best.Identifier)
+	}
+
+	return &IOSRuntime{
+		Identifier:  best.Identifier,
+		Version:     best.Version,
+		DeviceTypes: deviceTypes,
+	}, nil
+}
+
+// CreateSimulator creates a new iOS simulator and returns its UDID.
+// Uses xcrun simctl create <name> <deviceTypeID> <runtimeID>.
+func CreateSimulator(name, deviceTypeID, runtimeID string) (string, error) {
+	if _, err := FindSimctlBinary(); err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command("xcrun", "simctl", "create", name, deviceTypeID, runtimeID)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to create simulator: %w", err)
+	}
+
+	udid := strings.TrimSpace(string(output))
+	if udid == "" {
+		return "", fmt.Errorf("simctl create returned empty UDID")
+	}
+
+	logger.Info("Created simulator: %s (%s) [%s, %s]", name, udid, deviceTypeID, runtimeID)
+	return udid, nil
+}
+
+// DeleteSimulator deletes a simulator by UDID.
+func DeleteSimulator(udid string) error {
+	if _, err := FindSimctlBinary(); err != nil {
+		return err
+	}
+
+	cmd := exec.Command("xcrun", "simctl", "delete", udid)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete simulator %s: %s", udid, strings.TrimSpace(string(output)))
+	}
+
+	logger.Info("Deleted simulator: %s", udid)
+	return nil
+}
+
+// extractPlatform extracts the platform name from a runtime string.
+// e.g., "com.apple.CoreSimulator.SimRuntime.iOS-17-2" → "iOS"
+// e.g., "com.apple.CoreSimulator.SimRuntime.tvOS-17-0" → "tvOS"
+func extractPlatform(runtime string) string {
+	for _, p := range []string{"iOS", "tvOS", "watchOS", "xrOS"} {
+		if strings.Contains(runtime, p+"-") {
+			return p
+		}
+	}
+	return ""
 }
 
 // extractOSVersion extracts version from runtime string.

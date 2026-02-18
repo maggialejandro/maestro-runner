@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,55 @@ func ListAVDs() ([]AVDInfo, error) {
 
 	logger.Debug("Found %d AVDs: %v", len(avds), avds)
 	return avds, nil
+}
+
+// RunningAVDNames returns a set of AVD names that are currently running.
+// It queries each connected emulator serial via adb for its AVD name.
+func RunningAVDNames() map[string]bool {
+	cmd := exec.Command("adb", "devices")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	names := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && parts[1] == "device" && strings.HasPrefix(parts[0], "emulator-") {
+			serial := parts[0]
+			nameCmd := exec.Command("adb", "-s", serial, "shell", "getprop", "ro.boot.qemu.avd_name")
+			nameOut, err := nameCmd.Output()
+			if err == nil {
+				name := strings.TrimSpace(string(nameOut))
+				if name != "" {
+					names[name] = true
+				}
+			}
+		}
+	}
+	return names
+}
+
+// RunningEmulatorPorts returns the console ports of all currently running emulators.
+// Parses "emulator-NNNN" serials from `adb devices`.
+func RunningEmulatorPorts() []int {
+	cmd := exec.Command("adb", "devices")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var ports []int
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.Fields(strings.TrimSpace(line))
+		if len(parts) >= 2 && parts[1] == "device" && strings.HasPrefix(parts[0], "emulator-") {
+			portStr := strings.TrimPrefix(parts[0], "emulator-")
+			if port, err := strconv.Atoi(portStr); err == nil {
+				ports = append(ports, port)
+			}
+		}
+	}
+	return ports
 }
 
 // IsEmulator checks if a device serial is an emulator

@@ -224,7 +224,9 @@ func createUIAutomator2Driver(cfg *RunConfig, dev *device.AndroidDevice, info de
 	return driver, cleanup, nil
 }
 
-// autoDetectAndroidDevices finds N available Android devices.
+// autoDetectAndroidDevices finds up to N available Android devices that are not in use.
+// Skips devices whose UIAutomator2 socket is already bound by another maestro-runner instance.
+// Returns available devices (may be fewer than count) and an error only if zero found.
 func autoDetectAndroidDevices(count int) ([]string, error) {
 	// Use adb devices to list all connected devices
 	cmd := exec.Command("adb", "devices")
@@ -244,12 +246,19 @@ func autoDetectAndroidDevices(count int) ([]string, error) {
 		// Line format: "serial\tdevice"
 		parts := strings.Fields(line)
 		if len(parts) >= 2 && parts[1] == "device" {
-			devices = append(devices, parts[0])
+			serial := parts[0]
+			// Skip devices whose socket is already in use
+			socketPath := fmt.Sprintf("/tmp/uia2-%s.sock", serial)
+			if isSocketInUse(socketPath) {
+				logger.Info("Skipping device %s: socket %s in use", serial, socketPath)
+				continue
+			}
+			devices = append(devices, serial)
 		}
 	}
 
 	if len(devices) == 0 {
-		return nil, fmt.Errorf("no Android devices found")
+		return nil, fmt.Errorf("no available Android devices found")
 	}
 
 	// Return up to count devices
