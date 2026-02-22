@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/devicelab-dev/maestro-runner/pkg/core"
@@ -526,31 +527,47 @@ func (d *Driver) findElementByWDA(sel flow.Selector) (*core.ElementInfo, error) 
 }
 
 // getElementInfo gets element info from WDA element ID.
+// Fetches text, rect, and displayed status in parallel for speed.
 func (d *Driver) getElementInfo(elemID string) (*core.ElementInfo, error) {
 	info := &core.ElementInfo{
-		ID: elemID,
+		ID:      elemID,
+		Enabled: true, // WDA doesn't have separate enabled check
 	}
 
-	if text, err := d.client.ElementText(elemID); err == nil {
+	var (
+		text      string
+		x, y, w, h int
+		displayed bool
+		textErr, rectErr, dispErr error
+		wg sync.WaitGroup
+	)
+
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		text, textErr = d.client.ElementText(elemID)
+	}()
+	go func() {
+		defer wg.Done()
+		x, y, w, h, rectErr = d.client.ElementRect(elemID)
+	}()
+	go func() {
+		defer wg.Done()
+		displayed, dispErr = d.client.ElementDisplayed(elemID)
+	}()
+	wg.Wait()
+
+	if textErr == nil {
 		info.Text = text
 	}
-
-	if x, y, w, h, err := d.client.ElementRect(elemID); err == nil {
+	if rectErr == nil {
 		info.Bounds = core.Bounds{X: x, Y: y, Width: w, Height: h}
 	}
-
-	// Check if element is visible on screen via WDA's /element/{id}/displayed.
-	// This queries Apple's accessibility framework (FB_XCAXAIsVisibleAttribute)
-	// with a fresh snapshot each time — no stale cache.
 	// Reject off-screen elements so callers don't interact with invisible UI.
-	if displayed, err := d.client.ElementDisplayed(elemID); err == nil {
-		if !displayed {
-			return nil, fmt.Errorf("element exists but is not visible on screen")
-		}
-		info.Visible = true
+	if dispErr == nil && !displayed {
+		return nil, fmt.Errorf("element exists but is not visible on screen")
 	}
-
-	info.Enabled = true // WDA doesn't have separate enabled check
+	info.Visible = dispErr == nil && displayed
 
 	return info, nil
 }

@@ -749,21 +749,18 @@ func (d *Driver) launchApp(step *flow.LaunchAppStep) *core.CommandResult {
 		if err := d.client.CreateSession(bundleID, d.alertAction); err != nil {
 			return errorResult(err, fmt.Sprintf("Failed to create session for app: %s", bundleID))
 		}
-		// Disable quiescence wait to prevent XCTest crashes on certain Xcode/iOS versions
-		_ = d.client.DisableQuiescence()
-		// Set alert button selectors to help WDA find correct buttons on non-standard
-		// permission dialogs (e.g. location with "Allow While Using App")
-		if d.alertAction != "" {
-			if d.alertAction == "accept" {
-				_ = d.client.UpdateSettings(map[string]interface{}{
-					"acceptAlertButtonSelector": "**/XCUIElementTypeButton[`label CONTAINS[c] 'Allow'`]",
-				})
-			} else if d.alertAction == "dismiss" {
-				_ = d.client.UpdateSettings(map[string]interface{}{
-					"dismissAlertButtonSelector": "**/XCUIElementTypeButton[`label CONTAINS[c] 'Don't Allow' OR label CONTAINS[c] 'Dont Allow'`]",
-				})
-			}
+		// Single UpdateSettings call: disable quiescence (prevents XCTest crashes)
+		// and set alert button selectors for permission dialogs
+		sessionSettings := map[string]interface{}{
+			"shouldWaitForQuiescence": false,
+			"waitForIdleTimeout":      0,
 		}
+		if d.alertAction == "accept" {
+			sessionSettings["acceptAlertButtonSelector"] = "**/XCUIElementTypeButton[`label CONTAINS[c] 'Allow'`]"
+		} else if d.alertAction == "dismiss" {
+			sessionSettings["dismissAlertButtonSelector"] = "**/XCUIElementTypeButton[`label CONTAINS[c] 'Don't Allow' OR label CONTAINS[c] 'Dont Allow'`]"
+		}
+		_ = d.client.UpdateSettings(sessionSettings)
 		// If no arguments/environment, the session creation already launched the app
 		if !hasArgs {
 			return successResult(fmt.Sprintf("Launched app: %s", bundleID), nil)
