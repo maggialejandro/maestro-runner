@@ -384,18 +384,17 @@ func (d *Driver) findInteractiveElementByWDA(sel flow.Selector, stateFilter stri
 		return d.getElementInfo(elemID)
 	}
 
-	// Fallback: try type-filtered predicate queries.
-	// Class chain queries can fail due to quiescence while predicate queries may succeed.
-	// Note: placeholderValue is not reliably available in predicate queries, so we use label/value only.
-	textMatchCond := fmt.Sprintf("(label CONTAINS[c] '%s' OR value CONTAINS[c] '%s')", sel.Text, sel.Text)
-	for _, elemType := range []string{"XCUIElementTypeTextField", "XCUIElementTypeSecureTextField", "XCUIElementTypeSearchField"} {
-		pred := fmt.Sprintf("type == '%s' AND %s", elemType, textMatchCond)
-		if elemID, err := d.client.FindElement("predicate string", pred); err == nil && elemID != "" {
-			return d.getElementInfo(elemID)
-		}
+	// Fallback: combined predicate for all interactive types.
+	// Class chain can fail due to quiescence while predicate queries may succeed.
+	// Note: placeholderValue is not reliably available in predicate queries.
+	fallbackPred := fmt.Sprintf(
+		"((type == 'XCUIElementTypeTextField' OR type == 'XCUIElementTypeSecureTextField' OR type == 'XCUIElementTypeSearchField') AND (label CONTAINS[c] '%s' OR value CONTAINS[c] '%s')) OR (type == 'XCUIElementTypeButton' AND (label ==[c] '%s' OR name ==[c] '%s'))",
+		sel.Text, sel.Text, sel.Text, sel.Text,
+	)
+	if stateFilter != "" {
+		fallbackPred = fmt.Sprintf("(%s)%s", fallbackPred, stateFilter)
 	}
-	buttonPred := fmt.Sprintf("type == 'XCUIElementTypeButton' AND (label ==[c] '%s' OR name ==[c] '%s')", sel.Text, sel.Text)
-	if elemID, err := d.client.FindElement("predicate string", buttonPred); err == nil && elemID != "" {
+	if elemID, err := d.client.FindElement("predicate string", fallbackPred); err == nil && elemID != "" {
 		return d.getElementInfo(elemID)
 	}
 
@@ -483,6 +482,8 @@ func buildStateFilter(sel flow.Selector) string {
 }
 
 // findElementByWDA attempts to find an element using WDA strategies (single attempt).
+// Used primarily by assertions — tries generic predicate first since most asserts
+// target StaticText/labels, not TextFields. Tap actions use findElementForTap instead.
 func (d *Driver) findElementByWDA(sel flow.Selector) (*core.ElementInfo, error) {
 	stateFilter := buildStateFilter(sel)
 
@@ -496,25 +497,8 @@ func (d *Driver) findElementByWDA(sel flow.Selector) (*core.ElementInfo, error) 
 	}
 
 	if sel.Text != "" {
-		// Try TextField with matching placeholder/value
-		textFieldChain := fmt.Sprintf("**/XCUIElementTypeTextField[`(label CONTAINS[c] '%s' OR value CONTAINS[c] '%s' OR placeholderValue CONTAINS[c] '%s')%s`]", sel.Text, sel.Text, sel.Text, stateFilter)
-		if elemID, err := d.client.FindElement("class chain", textFieldChain); err == nil && elemID != "" {
-			return d.getElementInfo(elemID)
-		}
-
-		// Try SecureTextField
-		secureFieldChain := fmt.Sprintf("**/XCUIElementTypeSecureTextField[`(label CONTAINS[c] '%s' OR value CONTAINS[c] '%s' OR placeholderValue CONTAINS[c] '%s')%s`]", sel.Text, sel.Text, sel.Text, stateFilter)
-		if elemID, err := d.client.FindElement("class chain", secureFieldChain); err == nil && elemID != "" {
-			return d.getElementInfo(elemID)
-		}
-
-		// Try Button
-		buttonChain := fmt.Sprintf("**/XCUIElementTypeButton[`(label CONTAINS[c] '%s' OR name CONTAINS[c] '%s')%s`]", sel.Text, sel.Text, stateFilter)
-		if elemID, err := d.client.FindElement("class chain", buttonChain); err == nil && elemID != "" {
-			return d.getElementInfo(elemID)
-		}
-
-		// Try any element with matching text
+		// Try generic predicate first — most assertions target StaticText/labels,
+		// so this avoids 3 wasted type-specific queries (TextField, SecureTextField, Button)
 		predicateBase := fmt.Sprintf("label CONTAINS[c] '%s' OR name CONTAINS[c] '%s' OR value CONTAINS[c] '%s'",
 			sel.Text, sel.Text, sel.Text)
 		predicate := "(" + predicateBase + ")" + stateFilter
@@ -527,7 +511,7 @@ func (d *Driver) findElementByWDA(sel flow.Selector) (*core.ElementInfo, error) 
 }
 
 // getElementInfo gets element info from WDA element ID.
-// Fetches text, rect, and displayed status in parallel for speed.
+// Fetches text, rect, displayed status, and element name in parallel for speed.
 func (d *Driver) getElementInfo(elemID string) (*core.ElementInfo, error) {
 	info := &core.ElementInfo{
 		ID:      elemID,
@@ -536,13 +520,14 @@ func (d *Driver) getElementInfo(elemID string) (*core.ElementInfo, error) {
 
 	var (
 		text      string
+		elemName  string
 		x, y, w, h int
 		displayed bool
-		textErr, rectErr, dispErr error
+		textErr, rectErr, dispErr, nameErr error
 		wg sync.WaitGroup
 	)
 
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		text, textErr = d.client.ElementText(elemID)
@@ -555,6 +540,10 @@ func (d *Driver) getElementInfo(elemID string) (*core.ElementInfo, error) {
 		defer wg.Done()
 		displayed, dispErr = d.client.ElementDisplayed(elemID)
 	}()
+	go func() {
+		defer wg.Done()
+		elemName, nameErr = d.client.ElementName(elemID)
+	}()
 	wg.Wait()
 
 	if textErr == nil {
@@ -562,6 +551,9 @@ func (d *Driver) getElementInfo(elemID string) (*core.ElementInfo, error) {
 	}
 	if rectErr == nil {
 		info.Bounds = core.Bounds{X: x, Y: y, Width: w, Height: h}
+	}
+	if nameErr == nil {
+		info.Class = elemName
 	}
 	// Reject off-screen elements so callers don't interact with invisible UI.
 	if dispErr == nil && !displayed {

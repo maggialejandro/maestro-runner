@@ -54,12 +54,7 @@ func (d *Driver) tapOn(step *flow.TapOnStep) *core.CommandResult {
 	}
 
 	// Determine if element is a text field (needs focus verification)
-	isTextField := false
-	if info.ID != "" {
-		if name, err := d.client.ElementName(info.ID); err == nil {
-			isTextField = strings.Contains(name, "TextField")
-		}
-	}
+	isTextField := strings.Contains(info.Class, "TextField")
 
 	// Strategy: ElementClick first (WDA's internal element targeting handles z-order),
 	// then coordinate tap as fallback. For text fields, verify focus after each attempt
