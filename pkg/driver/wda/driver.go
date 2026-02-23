@@ -259,7 +259,7 @@ func (d *Driver) findElementWithContext(ctx context.Context, sel flow.Selector) 
 			} else {
 				lastErr = err
 			}
-			// HTTP round-trip is natural rate limit, no sleep needed
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
@@ -325,19 +325,21 @@ func (d *Driver) findElementForTapWithContext(ctx context.Context, sel flow.Sele
 				sel.Text, sel.Text, sel.Text, stateFilter)
 			exactElemID, _ := d.client.FindElement("predicate string", exactPredicate)
 
+			// If exact predicate found element, try getElementInfo directly — avoids
+			// a full page source fetch when the element is already identified.
+			if exactElemID != "" {
+				if info, err := d.getElementInfo(exactElemID); err == nil {
+					return info, nil
+				}
+			}
+
 			// Step 2b: Check if text exists via substring WDA predicate
 			predicateBase := fmt.Sprintf("label CONTAINS[c] '%s' OR name CONTAINS[c] '%s' OR value CONTAINS[c] '%s'",
 				sel.Text, sel.Text, sel.Text)
 			predicate := "(" + predicateBase + ")" + stateFilter
 			containsElemID, textExistsErr := d.client.FindElement("predicate string", predicate)
 
-			// Prefer exact match element for fallback; use contains match otherwise
-			fallbackElemID := exactElemID
-			if fallbackElemID == "" {
-				fallbackElemID = containsElemID
-			}
-
-			if textExistsErr != nil && exactElemID == "" {
+			if textExistsErr != nil {
 				// Text not found via WDA at all - try page source as fallback
 				if info, err := d.findElementByPageSourceOnce(sel); err == nil {
 					return info, nil
@@ -352,10 +354,9 @@ func (d *Driver) findElementForTapWithContext(ctx context.Context, sel flow.Sele
 				return info, nil
 			}
 
-			// Step 4: Page source failed (e.g. quiescence error) — use the best predicate element.
-			// Exact match is preferred to avoid "Password" hitting "Forgot Password?" etc.
-			if fallbackElemID != "" {
-				info, err := d.getElementInfo(fallbackElemID)
+			// Step 4: Page source failed (e.g. quiescence error) — use the contains predicate element.
+			if containsElemID != "" {
+				info, err := d.getElementInfo(containsElemID)
 				if err == nil {
 					return info, nil
 				}
@@ -365,28 +366,20 @@ func (d *Driver) findElementForTapWithContext(ctx context.Context, sel flow.Sele
 	}
 }
 
-// findInteractiveElementByWDA tries WDA queries for interactive element types only.
+// findInteractiveElementByWDA tries WDA queries for interactive element types in parallel.
 func (d *Driver) findInteractiveElementByWDA(sel flow.Selector, stateFilter string) (*core.ElementInfo, error) {
-	// Try class chain queries first (support placeholderValue attribute)
+	type queryResult struct {
+		elemID string
+		err    error
+		prio   int // lower = higher priority (TextField > SecureTextField > Button > fallback predicate)
+	}
+
 	textFieldChain := fmt.Sprintf("**/XCUIElementTypeTextField[`(label CONTAINS[c] '%s' OR value CONTAINS[c] '%s' OR placeholderValue CONTAINS[c] '%s')%s`]", sel.Text, sel.Text, sel.Text, stateFilter)
-	if elemID, err := d.client.FindElement("class chain", textFieldChain); err == nil && elemID != "" {
-		return d.getElementInfo(elemID)
-	}
-
 	secureFieldChain := fmt.Sprintf("**/XCUIElementTypeSecureTextField[`(label CONTAINS[c] '%s' OR value CONTAINS[c] '%s' OR placeholderValue CONTAINS[c] '%s')%s`]", sel.Text, sel.Text, sel.Text, stateFilter)
-	if elemID, err := d.client.FindElement("class chain", secureFieldChain); err == nil && elemID != "" {
-		return d.getElementInfo(elemID)
-	}
-
-	// Button queries use exact match (==[c]) to avoid "Password" matching "Forgot Password?" etc.
 	buttonChain := fmt.Sprintf("**/XCUIElementTypeButton[`(label ==[c] '%s' OR name ==[c] '%s')%s`]", sel.Text, sel.Text, stateFilter)
-	if elemID, err := d.client.FindElement("class chain", buttonChain); err == nil && elemID != "" {
-		return d.getElementInfo(elemID)
-	}
 
 	// Fallback: combined predicate for all interactive types.
 	// Class chain can fail due to quiescence while predicate queries may succeed.
-	// Note: placeholderValue is not reliably available in predicate queries.
 	fallbackPred := fmt.Sprintf(
 		"((type == 'XCUIElementTypeTextField' OR type == 'XCUIElementTypeSecureTextField' OR type == 'XCUIElementTypeSearchField') AND (label CONTAINS[c] '%s' OR value CONTAINS[c] '%s')) OR (type == 'XCUIElementTypeButton' AND (label ==[c] '%s' OR name ==[c] '%s'))",
 		sel.Text, sel.Text, sel.Text, sel.Text,
@@ -394,8 +387,42 @@ func (d *Driver) findInteractiveElementByWDA(sel flow.Selector, stateFilter stri
 	if stateFilter != "" {
 		fallbackPred = fmt.Sprintf("(%s)%s", fallbackPred, stateFilter)
 	}
-	if elemID, err := d.client.FindElement("predicate string", fallbackPred); err == nil && elemID != "" {
-		return d.getElementInfo(elemID)
+
+	queries := []struct {
+		strategy string
+		value    string
+		prio     int
+	}{
+		{"class chain", textFieldChain, 0},
+		{"class chain", secureFieldChain, 1},
+		{"class chain", buttonChain, 2},
+		{"predicate string", fallbackPred, 3},
+	}
+
+	ch := make(chan queryResult, len(queries))
+	for _, q := range queries {
+		go func(strategy, value string, prio int) {
+			elemID, err := d.client.FindElement(strategy, value)
+			if err != nil || elemID == "" {
+				ch <- queryResult{"", err, prio}
+				return
+			}
+			ch <- queryResult{elemID, nil, prio}
+		}(q.strategy, q.value, q.prio)
+	}
+
+	var bestID string
+	bestPrio := len(queries) // higher than any valid prio
+	for i := 0; i < len(queries); i++ {
+		r := <-ch
+		if r.err == nil && r.elemID != "" && r.prio < bestPrio {
+			bestID = r.elemID
+			bestPrio = r.prio
+		}
+	}
+
+	if bestID != "" {
+		return d.getElementInfo(bestID)
 	}
 
 	return nil, fmt.Errorf("no interactive element found via WDA")

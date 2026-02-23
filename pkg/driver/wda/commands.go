@@ -166,7 +166,7 @@ func (d *Driver) tapOnPoint(step *flow.TapOnPointStep) *core.CommandResult {
 // Assert commands
 
 func (d *Driver) assertVisible(step *flow.AssertVisibleStep) *core.CommandResult {
-	info, err := d.findElement(step.Selector, false, step.TimeoutMs)
+	info, err := d.findElement(step.Selector, step.IsOptional(), step.TimeoutMs)
 	if err != nil {
 		return errorResult(err, fmt.Sprintf("Element not visible: %s", selectorDesc(step.Selector)))
 	}
