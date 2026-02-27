@@ -276,6 +276,7 @@ type Condition struct {
 	NotVisible *Selector `yaml:"notVisible"`
 	Script     string    `yaml:"scriptCondition"`
 	Platform   string    `yaml:"platform"`
+	Timeout    int       `yaml:"timeout"` // Timeout in ms for visible/notVisible checks
 }
 
 // AssertConditionStep asserts a condition.

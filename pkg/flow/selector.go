@@ -55,6 +55,7 @@ type Selector struct {
 	Repeat                int    `yaml:"repeat"`                // Tap repeat count
 	Delay                 int    `yaml:"delay"`                 // Delay between repeats (ms)
 	WaitToSettleTimeoutMs int    `yaml:"waitToSettleTimeoutMs"` // Wait for UI settle (ms)
+	Timeout               int    `yaml:"timeout"`               // Timeout in ms for element finding
 	Label                 string `yaml:"label"`                 // Step label
 }
 
@@ -90,6 +91,7 @@ type selectorRaw struct {
 	Repeat                int         `yaml:"repeat"`
 	Delay                 int         `yaml:"delay"`
 	WaitToSettleTimeoutMs int         `yaml:"waitToSettleTimeoutMs"`
+	Timeout               int         `yaml:"timeout"`
 	Label                 string      `yaml:"label"`
 }
 
@@ -135,6 +137,7 @@ func (s *Selector) UnmarshalYAML(node *yaml.Node) error {
 	s.Repeat = raw.Repeat
 	s.Delay = raw.Delay
 	s.WaitToSettleTimeoutMs = raw.WaitToSettleTimeoutMs
+	s.Timeout = raw.Timeout
 	s.Label = raw.Label
 
 	// "element" is a shorthand for "text" (used in scrollUntilVisible, etc.)

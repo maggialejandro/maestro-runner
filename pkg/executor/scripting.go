@@ -431,6 +431,8 @@ func (se *ScriptEngine) CheckCondition(ctx context.Context, cond flow.Condition,
 	// Check visible
 	if cond.Visible != nil {
 		visibleStep := &flow.AssertVisibleStep{Selector: *cond.Visible}
+		visibleStep.TimeoutMs = conditionTimeout(cond, cond.Visible)
+		visibleStep.Optional = true
 		result := driver.Execute(visibleStep)
 		if !result.Success {
 			return false
@@ -440,6 +442,8 @@ func (se *ScriptEngine) CheckCondition(ctx context.Context, cond flow.Condition,
 	// Check notVisible
 	if cond.NotVisible != nil {
 		notVisibleStep := &flow.AssertNotVisibleStep{Selector: *cond.NotVisible}
+		notVisibleStep.TimeoutMs = conditionTimeout(cond, cond.NotVisible)
+		notVisibleStep.Optional = true
 		result := driver.Execute(notVisibleStep)
 		if !result.Success {
 			return false
@@ -455,6 +459,18 @@ func (se *ScriptEngine) CheckCondition(ctx context.Context, cond flow.Condition,
 	}
 
 	return true
+}
+
+// conditionTimeout returns the timeout to use for a condition check.
+// Priority: 1) Condition.Timeout, 2) Selector.Timeout, 3) 0 (driver uses OptionalFindTimeout)
+func conditionTimeout(cond flow.Condition, sel *flow.Selector) int {
+	if cond.Timeout > 0 {
+		return cond.Timeout
+	}
+	if sel != nil && sel.Timeout > 0 {
+		return sel.Timeout
+	}
+	return 0 // Optional=true on the step means driver uses OptionalFindTimeout (7s)
 }
 
 // withEnvVars applies environment variables and returns a restore function.
