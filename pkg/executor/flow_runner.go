@@ -92,6 +92,17 @@ func (fr *FlowRunner) Run() FlowResult {
 		_ = err // ignore error, just continue
 	}
 
+	// Apply typingFrequency with priority: Flow config > CLI flag > Default (0 = WDA default 60)
+	if configurer, ok := fr.driver.(core.TypingFrequencyConfigurer); ok {
+		typingFrequency := fr.config.TypingFrequency
+		if fr.flow.Config.TypingFrequency != nil {
+			typingFrequency = *fr.flow.Config.TypingFrequency
+		}
+		if typingFrequency > 0 {
+			_ = configurer.SetTypingFrequency(typingFrequency)
+		}
+	}
+
 	// Notify flow start
 	flowName := fr.detail.Name
 	flowFile := filepath.Base(fr.flow.SourcePath)

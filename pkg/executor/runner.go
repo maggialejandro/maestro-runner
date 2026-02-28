@@ -45,6 +45,7 @@ type RunnerConfig struct {
 
 	// Driver settings
 	WaitForIdleTimeout int // Global wait for idle timeout in ms
+	TypingFrequency    int // Global WDA typing frequency in keys/sec (0 = WDA default)
 
 	// Device information (set by executor)
 	DeviceInfo *report.Device

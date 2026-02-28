@@ -26,6 +26,9 @@ type Driver struct {
 	// Timeouts (0 = use defaults)
 	findTimeout         int // ms, for required elements
 	optionalFindTimeout int // ms, for optional elements
+
+	// Typing speed (0 = use WDA default of 60 keys/sec)
+	typingFrequency int
 }
 
 // NewDriver creates a new WDA driver.
@@ -77,6 +80,14 @@ func (d *Driver) SetWaitForIdleTimeout(ms int) error {
 		return d.client.DisableQuiescence()
 	}
 	// ms 1-200 (default range): keep quiescence disabled (session default)
+	return nil
+}
+
+// SetTypingFrequency sets the WDA typing speed in keys/sec.
+// The value is stored and passed per-request via the frequency parameter
+// on SendKeys/ElementSendKeys calls. 0 means use WDA default (60 keys/sec).
+func (d *Driver) SetTypingFrequency(freq int) error {
+	d.typingFrequency = freq
 	return nil
 }
 

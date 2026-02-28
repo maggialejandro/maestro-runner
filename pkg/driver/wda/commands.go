@@ -24,7 +24,7 @@ func (d *Driver) tapOn(step *flow.TapOnStep) *core.CommandResult {
 	// Handle keyboard key names — iOS keyboard buttons aren't reliably findable via WDA
 	if step.Selector.Text != "" {
 		if keyChar := iosKeyboardKey(step.Selector.Text); keyChar != "" {
-			if err := d.client.SendKeys(keyChar); err != nil {
+			if err := d.client.SendKeys(keyChar, 0); err != nil {
 				return errorResult(err, fmt.Sprintf("Failed to send key: %s", step.Selector.Text))
 			}
 			return successResult(fmt.Sprintf("Pressed keyboard key: %s", step.Selector.Text), nil)
@@ -212,7 +212,7 @@ func (d *Driver) inputText(step *flow.InputTextStep) *core.CommandResult {
 		}
 		// If we have element ID, send keys directly to the element
 		if info.ID != "" {
-			if err := d.client.ElementSendKeys(info.ID, text); err != nil {
+			if err := d.client.ElementSendKeys(info.ID, text, d.typingFrequency); err != nil {
 				return errorResult(err, "Input text to element failed")
 			}
 			return successResult(fmt.Sprintf("Entered text: %s%s", text, unicodeWarning), info)
@@ -236,7 +236,7 @@ func (d *Driver) inputText(step *flow.InputTextStep) *core.CommandResult {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	if err := d.client.SendKeys(text); err != nil {
+	if err := d.client.SendKeys(text, d.typingFrequency); err != nil {
 		return errorResult(err, "Input text failed")
 	}
 
@@ -271,7 +271,7 @@ func (d *Driver) eraseText(step *flow.EraseTextStep) *core.CommandResult {
 
 				if clearErr := d.client.ElementClear(elemID); clearErr == nil {
 					if remaining != "" {
-						if sendErr := d.client.SendKeys(remaining); sendErr == nil {
+						if sendErr := d.client.SendKeys(remaining, d.typingFrequency); sendErr == nil {
 							return successResult(fmt.Sprintf("Erased %d characters", chars), nil)
 						}
 						// SendKeys failed, fall through to delete key approach
@@ -290,7 +290,7 @@ func (d *Driver) eraseText(step *flow.EraseTextStep) *core.CommandResult {
 	// Fallback: Send all delete keys in a single request
 	// WDA supports sending multiple backspace characters at once
 	deleteStr := strings.Repeat("\b", chars)
-	if err := d.client.SendKeys(deleteStr); err != nil {
+	if err := d.client.SendKeys(deleteStr, d.typingFrequency); err != nil {
 		return errorResult(err, "Erase text failed")
 	}
 
@@ -300,7 +300,7 @@ func (d *Driver) eraseText(step *flow.EraseTextStep) *core.CommandResult {
 func (d *Driver) hideKeyboard(step *flow.HideKeyboardStep) *core.CommandResult {
 	// iOS: tap outside to dismiss keyboard, or press Done button
 	// Try pressing the "return" key (ignore error - keyboard might not be visible)
-	_ = d.client.SendKeys("\n")
+	_ = d.client.SendKeys("\n", 0)
 
 	return successResult("Attempted to hide keyboard", nil)
 }
@@ -367,7 +367,7 @@ func (d *Driver) inputRandom(step *flow.InputRandomStep) *core.CommandResult {
 		text = randomString(length)
 	}
 
-	if err := d.client.SendKeys(text); err != nil {
+	if err := d.client.SendKeys(text, d.typingFrequency); err != nil {
 		return errorResult(err, "Input random text failed")
 	}
 
@@ -562,7 +562,7 @@ func (d *Driver) pressKey(step *flow.PressKeyStep) *core.CommandResult {
 	default:
 		// Try keyboard key
 		if keyChar := iosKeyboardKey(step.Key); keyChar != "" {
-			if err := d.client.SendKeys(keyChar); err != nil {
+			if err := d.client.SendKeys(keyChar, 0); err != nil {
 				return errorResult(err, fmt.Sprintf("Press %s failed", step.Key))
 			}
 		} else {

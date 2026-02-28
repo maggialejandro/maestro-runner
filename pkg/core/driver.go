@@ -193,6 +193,12 @@ type WebViewDetector interface {
 	DetectWebView() (*WebViewInfo, error)
 }
 
+// TypingFrequencyConfigurer is an optional interface drivers can implement
+// to control typing speed. Currently only WDA (iOS) supports this.
+type TypingFrequencyConfigurer interface {
+	SetTypingFrequency(freq int) error
+}
+
 // LogEntry represents a single log message captured during execution
 type LogEntry struct {
 	Timestamp time.Time `json:"timestamp"`

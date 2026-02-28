@@ -127,6 +127,12 @@ Examples:
 			Value:   200,
 			EnvVars: []string{"MAESTRO_WAIT_FOR_IDLE_TIMEOUT"},
 		},
+		&cli.IntFlag{
+			Name:    "typing-frequency",
+			Usage:   "WDA typing speed in keys/sec (default 30). Lower values help React Native apps.",
+			Value:   30,
+			EnvVars: []string{"MAESTRO_TYPING_FREQUENCY"},
+		},
 
 		// Emulator management flags (start-emulator, auto-start-emulator,
 		// shutdown-after, boot-timeout) are global flags defined in cli.go.
@@ -428,6 +434,7 @@ type RunConfig struct {
 
 	// Driver settings
 	WaitForIdleTimeout int    // Wait for device idle in ms (0 = disabled, default 200)
+	TypingFrequency    int    // WDA typing frequency in keys/sec (0 = use WDA default of 60)
 	TeamID             string // Apple Development Team ID for WDA code signing
 
 	// Emulator/Simulator management
@@ -596,6 +603,7 @@ func runTest(c *cli.Context) error {
 		CapsFile:           capsFile,
 		Capabilities:       caps,
 		WaitForIdleTimeout: getInt("wait-for-idle-timeout"),
+		TypingFrequency:    getInt("typing-frequency"),
 		TeamID:             getString("team-id"),
 		StartEmulator:      getString("start-emulator"),
 		StartSimulator:     getString("start-simulator"),
@@ -1145,6 +1153,7 @@ func executeSingleDevice(cfg *RunConfig, flows []flow.Flow) (*executor.RunResult
 		DriverName:         driverName,
 		Env:                cfg.Env,
 		WaitForIdleTimeout: cfg.WaitForIdleTimeout,
+		TypingFrequency:    cfg.TypingFrequency,
 		DeviceInfo:         &deviceInfo,
 		OnFlowStart:        onFlowStart,
 		OnStepComplete:     onStepComplete,
@@ -1184,6 +1193,7 @@ func ExecuteFlowWithDriver(driver core.Driver, cfg *RunConfig, f flow.Flow) (*ex
 		DriverName:         driverName,
 		Env:                cfg.Env,
 		WaitForIdleTimeout: cfg.WaitForIdleTimeout,
+		TypingFrequency:    cfg.TypingFrequency,
 		DeviceInfo:         &deviceInfo,
 		OnFlowStart:        onFlowStart,
 		OnStepComplete:     onStepComplete,
@@ -1455,6 +1465,7 @@ func executeAppiumSingleSession(cfg *RunConfig, flows []flow.Flow) (*executor.Ru
 		DriverName:         "appium",
 		Env:                cfg.Env,
 		WaitForIdleTimeout: cfg.WaitForIdleTimeout,
+		TypingFrequency:    cfg.TypingFrequency,
 		DeviceInfo:         &deviceInfo,
 		OnFlowStart:        onFlowStart,
 		OnStepComplete:     onStepComplete,
@@ -1960,6 +1971,7 @@ func createParallelRunner(cfg *RunConfig, workers []executor.DeviceWorker, platf
 		DriverName:         driverName,
 		Env:                cfg.Env,
 		WaitForIdleTimeout: cfg.WaitForIdleTimeout,
+		TypingFrequency:    cfg.TypingFrequency,
 		// Callbacks will be set per-worker in parallel.go with device info
 	}
 

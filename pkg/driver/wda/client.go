@@ -198,19 +198,27 @@ func (c *Client) Swipe(fromX, fromY, toX, toY float64, durationSec float64) erro
 
 // Input
 
-// SendKeys types text.
-func (c *Client) SendKeys(text string) error {
-	_, err := c.post(c.sessionPath("/wda/keys"), map[string]interface{}{
+// SendKeys types text. If frequency > 0, it overrides the session typing speed (keys/sec).
+func (c *Client) SendKeys(text string, frequency int) error {
+	body := map[string]interface{}{
 		"value": strings.Split(text, ""),
-	})
+	}
+	if frequency > 0 {
+		body["frequency"] = frequency
+	}
+	_, err := c.post(c.sessionPath("/wda/keys"), body)
 	return err
 }
 
-// ElementSendKeys types text into an element.
-func (c *Client) ElementSendKeys(elementID, text string) error {
-	_, err := c.post(c.sessionPath(fmt.Sprintf("/element/%s/value", elementID)), map[string]interface{}{
+// ElementSendKeys types text into an element. If frequency > 0, it overrides the session typing speed (keys/sec).
+func (c *Client) ElementSendKeys(elementID, text string, frequency int) error {
+	body := map[string]interface{}{
 		"value": strings.Split(text, ""),
-	})
+	}
+	if frequency > 0 {
+		body["frequency"] = frequency
+	}
+	_, err := c.post(c.sessionPath(fmt.Sprintf("/element/%s/value", elementID)), body)
 	return err
 }
 

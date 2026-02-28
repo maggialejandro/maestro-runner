@@ -418,7 +418,7 @@ func TestSendKeys(t *testing.T) {
 		sessionID:  "test-session",
 	}
 
-	err := client.SendKeys("hello world")
+	err := client.SendKeys("hello world", 0)
 	if err != nil {
 		t.Fatalf("SendKeys failed: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestElementSendKeys(t *testing.T) {
 		sessionID:  "test-session",
 	}
 
-	err := client.ElementSendKeys("elem123", "hello")
+	err := client.ElementSendKeys("elem123", "hello", 0)
 	if err != nil {
 		t.Fatalf("ElementSendKeys failed: %v", err)
 	}
