@@ -1,6 +1,7 @@
 package uiautomator2
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -4174,6 +4175,34 @@ func TestScrollUntilVisibleDefaultMaxScrolls(t *testing.T) {
 
 // Verify MockUIA2Client satisfies UIA2Client at compile time.
 var _ UIA2Client = (*MockUIA2Client)(nil)
+
+func TestIsElementNotFoundError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"context deadline exceeded", context.DeadlineExceeded, true},
+		{"wrapped deadline exceeded", fmt.Errorf("element 'x' not found: %w", context.DeadlineExceeded), true},
+		{"element not found", fmt.Errorf("element not found"), true},
+		{"no elements match", fmt.Errorf("no elements match selector"), true},
+		{"no such element", fmt.Errorf("no such element: An element could not be located"), true},
+		{"could not be located", fmt.Errorf("An element could not be located on the page"), true},
+		{"appium deadline with no such element", fmt.Errorf("context deadline exceeded: no such element: An element could not be located on the page using the given search parameters"), true},
+		{"connection refused", fmt.Errorf("connection refused"), false},
+		{"send request failed", fmt.Errorf("send request failed"), false},
+		{"EOF", fmt.Errorf("unexpected EOF"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isElementNotFoundError(tt.err)
+			if got != tt.expected {
+				t.Errorf("isElementNotFoundError(%q) = %v, want %v", tt.err, got, tt.expected)
+			}
+		})
+	}
+}
 
 // Verify uiautomator2.DeviceInfo is used correctly.
 var _ = &uiautomator2.DeviceInfo{}

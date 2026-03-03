@@ -1977,6 +1977,158 @@ func TestScrollUntilVisibleScrollError(t *testing.T) {
 	}
 }
 
+func TestScrollUntilVisibleOffScreenElement(t *testing.T) {
+	// Element is found by UiAutomator but is off-screen (y=3000 on 2400px screen).
+	// scrollUntilVisible should scroll via ADB until the element moves on-screen.
+	findCount := 0
+	server := setupMockServer(t, map[string]func(w http.ResponseWriter, r *http.Request){
+		"POST /element": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"value": map[string]string{"ELEMENT": "elem-offscreen"},
+			})
+		},
+		"GET /element/elem-offscreen/text": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"value": "Target"})
+		},
+		"GET /element/elem-offscreen/rect": func(w http.ResponseWriter, r *http.Request) {
+			findCount++
+			// First 2 finds: element is off-screen (below viewport)
+			// Third find: element has scrolled into view
+			y := 3000
+			if findCount >= 3 {
+				y = 500
+			}
+			writeJSON(w, map[string]interface{}{
+				"value": map[string]int{"x": 100, "y": y, "width": 200, "height": 50},
+			})
+		},
+		"GET /source": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"value": `<hierarchy><node text="Other" bounds="[0,0][100,100]"/></hierarchy>`,
+			})
+		},
+	})
+	defer server.Close()
+
+	shell := &MockShellExecutor{}
+	client := newMockHTTPClient(server.URL)
+	info := &core.PlatformInfo{ScreenWidth: 1080, ScreenHeight: 2400}
+	driver := New(client.Client, info, shell)
+
+	step := &flow.ScrollUntilVisibleStep{
+		Element:   flow.Selector{ID: "target-button"},
+		Direction: "UP",
+	}
+	result := driver.Execute(step)
+
+	if !result.Success {
+		t.Errorf("expected success, got error: %v", result.Error)
+	}
+	// Should have issued at least 2 ADB swipe commands before finding on-screen
+	swipeCount := 0
+	for _, cmd := range shell.commands {
+		if strings.HasPrefix(cmd, "input swipe") {
+			swipeCount++
+			// Direction UP = finger moves down = fromY < toY
+			var fromX, fromY, toX, toY, dur int
+			fmt.Sscanf(cmd, "input swipe %d %d %d %d %d", &fromX, &fromY, &toX, &toY, &dur)
+			if fromY >= toY {
+				t.Errorf("scroll UP should produce finger-down swipe (fromY < toY), got fromY=%d toY=%d", fromY, toY)
+			}
+		}
+	}
+	if swipeCount < 2 {
+		t.Errorf("expected at least 2 ADB swipes for off-screen element, got %d", swipeCount)
+	}
+}
+
+func TestScrollUntilVisibleUsesADBSwipe(t *testing.T) {
+	server := setupMockServer(t, map[string]func(w http.ResponseWriter, r *http.Request){
+		"POST /element": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"value": map[string]string{"ELEMENT": ""},
+			})
+		},
+		"GET /source": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"value": `<hierarchy><node text="Other" bounds="[0,0][100,100]"/></hierarchy>`,
+			})
+		},
+	})
+	defer server.Close()
+
+	shell := &MockShellExecutor{}
+	client := newMockHTTPClient(server.URL)
+	info := &core.PlatformInfo{ScreenWidth: 1080, ScreenHeight: 2400}
+	driver := New(client.Client, info, shell)
+
+	step := &flow.ScrollUntilVisibleStep{
+		Element:    flow.Selector{Text: "Target"},
+		Direction:  "down",
+		MaxScrolls: 1,
+	}
+	driver.Execute(step)
+
+	if len(shell.commands) == 0 {
+		t.Fatal("expected ADB shell commands for scroll")
+	}
+	cmd := shell.commands[0]
+	if !strings.HasPrefix(cmd, "input swipe") {
+		t.Errorf("expected 'input swipe' command, got: %s", cmd)
+	}
+	// Direction DOWN = finger moves up = fromY > toY
+	var fromX, fromY, toX, toY, dur int
+	fmt.Sscanf(cmd, "input swipe %d %d %d %d %d", &fromX, &fromY, &toX, &toY, &dur)
+	if fromY <= toY {
+		t.Errorf("scroll DOWN should produce finger-up swipe (fromY > toY), got fromY=%d toY=%d", fromY, toY)
+	}
+}
+
+func TestScrollUntilVisibleConnectionError(t *testing.T) {
+	// Create a server that we'll shut down mid-scroll to simulate connection failure
+	callCount := 0
+	server := setupMockServer(t, map[string]func(w http.ResponseWriter, r *http.Request){
+		"POST /element": func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			writeJSON(w, map[string]interface{}{
+				"value": map[string]string{"ELEMENT": ""},
+			})
+		},
+		"GET /source": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"value": `<hierarchy><node text="Other" bounds="[0,0][100,100]"/></hierarchy>`,
+			})
+		},
+		"GET /appium/device/info": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{
+				"value": map[string]interface{}{"realDisplaySize": "1080x2400"},
+			})
+		},
+	})
+
+	client := newMockHTTPClient(server.URL)
+	info := &core.PlatformInfo{ScreenWidth: 1080, ScreenHeight: 2400}
+	driver := New(client.Client, info, nil)
+
+	// Shut down the server to simulate connection failure
+	server.Close()
+
+	step := &flow.ScrollUntilVisibleStep{
+		Element:    flow.Selector{Text: "Target"},
+		Direction:  "down",
+		MaxScrolls: 10,
+	}
+	result := driver.Execute(step)
+
+	if result.Success {
+		t.Fatal("expected failure on connection error")
+	}
+	// Should get a connection error, not "element not found after N scrolls"
+	if strings.Contains(result.Error.Error(), "not found after") {
+		t.Errorf("expected connection error to be propagated, got: %s", result.Error.Error())
+	}
+}
+
 // ============================================================================
 // Relative Selector Tests (uses HTTP mock for anchor + page source for target)
 // ============================================================================
