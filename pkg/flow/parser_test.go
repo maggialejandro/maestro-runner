@@ -137,7 +137,9 @@ func TestParse_AllStepTypes(t *testing.T) {
 		{"setLocation", `- setLocation: {latitude: "37.7", longitude: "-122.4"}`, StepSetLocation},
 		{"setOrientation scalar", `- setOrientation: LANDSCAPE`, StepSetOrientation},
 		{"setOrientation mapping", `- setOrientation: {orientation: PORTRAIT}`, StepSetOrientation},
-		{"setAirplaneMode", `- setAirplaneMode: {enabled: true}`, StepSetAirplaneMode},
+		{"setAirplaneMode enabled scalar", `- setAirplaneMode: enabled`, StepSetAirplaneMode},
+		{"setAirplaneMode disabled scalar", `- setAirplaneMode: disabled`, StepSetAirplaneMode},
+		{"setAirplaneMode mapping", `- setAirplaneMode: {enabled: true}`, StepSetAirplaneMode},
 		{"toggleAirplaneMode", `- toggleAirplaneMode:`, StepToggleAirplaneMode},
 		{"travel", `- travel: {points: ["0,0"], speed: 50}`, StepTravel},
 		{"openLink scalar", `- openLink: "https://example.com"`, StepOpenLink},
@@ -882,6 +884,38 @@ func TestParse_AssertConditionStep(t *testing.T) {
 	}
 }
 
+func TestParse_SetAirplaneModeScalarValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		enabled bool
+	}{
+		{"enabled scalar", `- setAirplaneMode: enabled`, true},
+		{"disabled scalar", `- setAirplaneMode: disabled`, false},
+		{"mapping enabled true", `- setAirplaneMode: {enabled: true}`, true},
+		{"mapping enabled false", `- setAirplaneMode: {enabled: false}`, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			flow, err := Parse([]byte(tc.yaml), "test.yaml")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(flow.Steps) != 1 {
+				t.Fatalf("expected 1 step, got %d", len(flow.Steps))
+			}
+			step, ok := flow.Steps[0].(*SetAirplaneModeStep)
+			if !ok {
+				t.Fatalf("expected *SetAirplaneModeStep, got %T", flow.Steps[0])
+			}
+			if step.Enabled != tc.enabled {
+				t.Errorf("expected Enabled=%v, got %v", tc.enabled, step.Enabled)
+			}
+		})
+	}
+}
+
 func TestIsStepType(t *testing.T) {
 	validTypes := []string{
 		"tapOn", "doubleTapOn", "longPressOn", "tapOnPoint", "swipe", "scroll",
@@ -1068,7 +1102,8 @@ func TestParse_DecodeErrors(t *testing.T) {
 		{"clearState invalid", `- clearState: {appId: [invalid]}`},
 		{"setLocation invalid", `- setLocation: {latitude: [invalid]}`},
 		{"setOrientation invalid", `- setOrientation: {orientation: [invalid]}`},
-		{"setAirplaneMode invalid", `- setAirplaneMode: {enabled: "not a bool"}`},
+		{"setAirplaneMode invalid mapping", `- setAirplaneMode: {enabled: "not a bool"}`},
+		{"setAirplaneMode invalid scalar", `- setAirplaneMode: foobar`},
 		{"travel invalid", `- travel: {points: "not an array"}`},
 		{"openLink invalid", `- openLink: {link: [invalid]}`},
 		{"runScript invalid", `- runScript: {script: [invalid]}`},

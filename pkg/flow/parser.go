@@ -546,7 +546,17 @@ func decodeStep(stepType StepType, valueNode *yaml.Node, sourcePath string) (Ste
 
 	case StepSetAirplaneMode:
 		var s SetAirplaneModeStep
-		if err := valueNode.Decode(&s); err != nil {
+		if valueNode.Kind == yaml.ScalarNode {
+			switch valueNode.Value {
+			case "enabled":
+				s.Enabled = true
+			case "disabled":
+				s.Enabled = false
+			default:
+				return nil, wrapParseError(sourcePath, valueNode.Line,
+					fmt.Errorf("setAirplaneMode expects 'enabled' or 'disabled', got %q", valueNode.Value))
+			}
+		} else if err := valueNode.Decode(&s); err != nil {
 			return nil, wrapParseError(sourcePath, valueNode.Line, err)
 		}
 		s.StepType = stepType
