@@ -439,22 +439,61 @@ func (d *Driver) scrollUntilVisible(step *flow.ScrollUntilVisibleStep) *core.Com
 	deadline := time.Now().Add(timeout)
 
 	for i := 0; i < maxScrolls && time.Now().Before(deadline); i++ {
-		info, err := d.findElement(step.Element, true, 1000)
+		// Quick single-attempt element check (no polling loop, short timeout)
+		info, err := d.findElementOnce(step.Element)
 		if err == nil && info != nil {
 			return successResult("Element found after scrolling", info)
 		}
 
-		// Scroll
-		scrollStep := &flow.ScrollStep{Direction: direction}
-		result := d.scroll(scrollStep)
+		// Scroll with larger distance for faster traversal
+		result := d.scrollForSearch(direction)
 		if !result.Success {
 			return result
 		}
 
-		time.Sleep(300 * time.Millisecond) // Wait for scroll animation
+		time.Sleep(150 * time.Millisecond) // Wait for scroll animation
 	}
 
 	return errorResult(fmt.Errorf("element not found after scrolling"), fmt.Sprintf("Element not found: %s", selectorDesc(step.Element)))
+}
+
+// scrollForSearch performs a scroll with a larger distance (2/5 viewport) for faster
+// traversal during scrollUntilVisible. Uses a shorter swipe duration for speed.
+func (d *Driver) scrollForSearch(direction string) *core.CommandResult {
+	width, height, err := d.screenSize()
+	if err != nil {
+		return errorResult(err, "Failed to get screen size")
+	}
+
+	centerX := float64(width) / 2
+	centerY := float64(height) / 2
+	scrollDistance := float64(height) * 2 / 5
+
+	var fromX, fromY, toX, toY float64
+	switch direction {
+	case "up":
+		fromX, fromY = centerX, centerY-scrollDistance/2
+		toX, toY = centerX, centerY+scrollDistance/2
+	case "down":
+		fromX, fromY = centerX, centerY+scrollDistance/2
+		toX, toY = centerX, centerY-scrollDistance/2
+	case "left":
+		scrollDistance = float64(width) * 2 / 5
+		fromX, fromY = centerX-scrollDistance/2, centerY
+		toX, toY = centerX+scrollDistance/2, centerY
+	case "right":
+		scrollDistance = float64(width) * 2 / 5
+		fromX, fromY = centerX+scrollDistance/2, centerY
+		toX, toY = centerX-scrollDistance/2, centerY
+	default:
+		return errorResult(fmt.Errorf("invalid direction: %s", direction), "Invalid scroll direction")
+	}
+
+	if err := d.client.Swipe(fromX, fromY, toX, toY, 0.25); err != nil {
+		return errorResult(err, "Scroll failed")
+	}
+
+	return successResult(fmt.Sprintf("Scrolled %s", direction), nil)
 }
 
 func (d *Driver) swipe(step *flow.SwipeStep) *core.CommandResult {
