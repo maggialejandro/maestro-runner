@@ -218,8 +218,19 @@ func (d *AndroidDevice) Shell(cmd string) (string, error) {
 }
 
 // Install installs an APK on the device.
+// It tries with -g (grant all permissions) first; some OEM devices (e.g. Xiaomi)
+// block that flag, so on failure it retries without it.
 func (d *AndroidDevice) Install(apkPath string) error {
 	_, err := d.adb("install", "-r", "-g", apkPath)
+	if err != nil && strings.Contains(err.Error(), "INSTALL_GRANT_RUNTIME_PERMISSIONS") {
+		_, err = d.adb("install", "-r", apkPath)
+	}
+	return err
+}
+
+// InstallTestAPK installs a test APK on the device using the -t flag required for androidTest packages.
+func (d *AndroidDevice) InstallTestAPK(apkPath string) error {
+	_, err := d.adb("install", "-r", "-t", apkPath)
 	return err
 }
 
