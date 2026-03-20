@@ -119,54 +119,82 @@ func createUIAutomator2Driver(cfg *RunConfig, dev *device.AndroidDevice, info de
 		printSetupSuccess("UIAutomator2 installed")
 	}
 
-	// 2. Start UIAutomator2 server
-	printSetupStep("Starting UIAutomator2 server...")
-	logger.Info("Starting UIAutomator2 server on device %s", dev.Serial())
+	// 2. Start UIAutomator2 server and create session.
+	// UiAutomation may fail to connect on the first instrumentation start
+	// (especially on physical devices), so we retry the full server+session cycle.
 	uia2Cfg := device.DefaultUIAutomator2Config()
-	if err := dev.StartUIAutomator2(uia2Cfg); err != nil {
-		logger.Error("Failed to start UIAutomator2: %v", err)
-		return nil, nil, fmt.Errorf("start UIAutomator2: %w", err)
-	}
-
-	// Debug: Print socket/port info
-	if dev.SocketPath() != "" {
-		fmt.Printf("  → Socket: %s\n", dev.SocketPath())
-	} else if dev.LocalPort() != 0 {
-		fmt.Printf("  → Port: %d\n", dev.LocalPort())
-	}
-
-	// Verify server is actually responding
-	if !dev.IsUIAutomator2Running() {
-		return nil, nil, fmt.Errorf("UIAutomator2 server not responding after start")
-	}
-	printSetupSuccess("UIAutomator2 server started")
-
-	// 3. Create client
-	var client *uiautomator2.Client
-	if dev.SocketPath() != "" {
-		client = uiautomator2.NewClient(dev.SocketPath())
-	} else {
-		client = uiautomator2.NewClientTCP(dev.LocalPort())
-	}
-
-	// Set log path to report folder
-	if cfg.OutputDir != "" {
-		client.SetLogPath(filepath.Join(cfg.OutputDir, "client.log"))
-	}
-
-	// 4. Create session
-	printSetupStep("Creating session...")
-	logger.Info("Creating UIAutomator2 session with capabilities: Platform=Android, Device=%s", info.Model)
 	caps := uiautomator2.Capabilities{
 		PlatformName: "Android",
 		DeviceName:   info.Model,
 	}
-	if err := client.CreateSession(caps); err != nil {
-		logger.Error("Failed to create session: %v", err)
-		if stopErr := dev.StopUIAutomator2(); stopErr != nil {
-			logger.Warn("failed to stop UIAutomator2 after session failure: %v", stopErr)
+
+	var client *uiautomator2.Client
+	const maxStartRetries = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxStartRetries; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("  %s⚠%s Retrying UIAutomator2 startup (attempt %d/%d)...\n",
+				color(colorYellow), color(colorReset), attempt, maxStartRetries)
+			logger.Warn("Retrying UIAutomator2 startup attempt %d/%d (previous error: %v)", attempt, maxStartRetries, lastErr)
+			time.Sleep(2 * time.Second)
 		}
-		return nil, nil, fmt.Errorf("create session: %w", err)
+
+		// Start server
+		printSetupStep("Starting UIAutomator2 server...")
+		logger.Info("Starting UIAutomator2 server on device %s", dev.Serial())
+		if err := dev.StartUIAutomator2(uia2Cfg); err != nil {
+			logger.Error("Failed to start UIAutomator2: %v", err)
+			lastErr = fmt.Errorf("start UIAutomator2: %w", err)
+			continue
+		}
+
+		// Debug: Print socket/port info
+		if dev.SocketPath() != "" {
+			fmt.Printf("  → Socket: %s\n", dev.SocketPath())
+		} else if dev.LocalPort() != 0 {
+			fmt.Printf("  → Port: %d\n", dev.LocalPort())
+		}
+
+		// Verify server is actually responding
+		if !dev.IsUIAutomator2Running() {
+			lastErr = fmt.Errorf("UIAutomator2 server not responding after start")
+			continue
+		}
+		printSetupSuccess("UIAutomator2 server started")
+
+		// Create client
+		if dev.SocketPath() != "" {
+			client = uiautomator2.NewClient(dev.SocketPath())
+		} else {
+			client = uiautomator2.NewClientTCP(dev.LocalPort())
+		}
+		if cfg.OutputDir != "" {
+			client.SetLogPath(filepath.Join(cfg.OutputDir, "client.log"))
+		}
+
+		// Create session
+		printSetupStep("Creating session...")
+		logger.Info("Creating UIAutomator2 session with capabilities: Platform=Android, Device=%s", info.Model)
+		if err := client.CreateSession(caps); err != nil {
+			logger.Error("Session creation failed: %v", err)
+			lastErr = fmt.Errorf("create session: %w", err)
+			// Stop the broken server before retrying
+			if stopErr := dev.StopUIAutomator2(); stopErr != nil {
+				logger.Warn("failed to stop UIAutomator2 after session failure: %v", stopErr)
+			}
+			continue
+		}
+
+		// Success
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		logger.Error("Failed after %d attempts: %v", maxStartRetries, lastErr)
+		if stopErr := dev.StopUIAutomator2(); stopErr != nil {
+			logger.Warn("failed to stop UIAutomator2 after all retries: %v", stopErr)
+		}
+		return nil, nil, fmt.Errorf("%w", lastErr)
 	}
 	logger.Info("Session created successfully: %s", client.SessionID())
 	printSetupSuccess("Session created")
