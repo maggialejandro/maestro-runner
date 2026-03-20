@@ -41,7 +41,11 @@ build-windows:
 build-all: build-linux build-darwin build-windows
 
 install:
-	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) .
+	@mkdir -p $(INSTALL_DIR)/bin
+	$(GOBUILD) $(LDFLAGS) -o $(INSTALL_DIR)/bin/$(BINARY_NAME) .
+	@if [ -d drivers ]; then cp -r drivers $(INSTALL_DIR)/; fi
+	@ln -sf $(INSTALL_DIR)/bin/$(BINARY_NAME) $(GOPATH)/bin/$(BINARY_NAME)
+	@echo "Installed to $(INSTALL_DIR) (symlinked to $(GOPATH)/bin/$(BINARY_NAME))"
 
 clean:
 	$(GOCLEAN)
