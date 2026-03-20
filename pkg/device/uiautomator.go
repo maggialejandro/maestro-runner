@@ -166,7 +166,17 @@ func findFreePort(start, end int) (int, error) {
 
 // StopUIAutomator2 stops the UIAutomator2 server.
 func (d *AndroidDevice) StopUIAutomator2() error {
-	// Force stop both packages - this should kill the instrumentation runner
+	// Kill instrumentation processes by PID first (more reliable than force-stop
+	// for deregistering the UiAutomation accessibility service on SDK 36+)
+	for _, pkg := range []string{UIAutomator2Server, UIAutomator2Test} {
+		if pid, err := d.Shell(fmt.Sprintf("pidof %s", pkg)); err == nil && strings.TrimSpace(pid) != "" {
+			if _, err := d.Shell(fmt.Sprintf("kill -9 %s", strings.TrimSpace(pid))); err != nil {
+				logger.Debug("kill -9 %s (pid %s): %v", pkg, strings.TrimSpace(pid), err)
+			}
+		}
+	}
+
+	// Force stop both packages as well
 	if _, err := d.Shell("am force-stop " + UIAutomator2Server); err != nil {
 		logger.Warn("failed to force-stop %s: %v", UIAutomator2Server, err)
 	}
@@ -174,8 +184,9 @@ func (d *AndroidDevice) StopUIAutomator2() error {
 		logger.Warn("failed to force-stop %s: %v", UIAutomator2Test, err)
 	}
 
-	// Give processes time to die
-	time.Sleep(300 * time.Millisecond)
+	// Wait for the system to deregister the UiAutomation accessibility service.
+	// On SDK 36+ this can take longer than the process kill itself.
+	time.Sleep(2 * time.Second)
 
 	// Clean up socket (Linux/Mac) - always try default path even if socketPath not set
 	if d.socketPath != "" {
@@ -321,8 +332,14 @@ func (d *AndroidDevice) InstallUIAutomator2(apksDir string) error {
 			}
 		}
 
-		if err := d.Install(apkPath); err != nil {
-			return fmt.Errorf("failed to install %s: %w", apk.pkg, err)
+		var installErr error
+		if apk.pkg == UIAutomator2Test {
+			installErr = d.InstallTestAPK(apkPath)
+		} else {
+			installErr = d.Install(apkPath)
+		}
+		if installErr != nil {
+			return fmt.Errorf("failed to install %s: %w", apk.pkg, installErr)
 		}
 	}
 
