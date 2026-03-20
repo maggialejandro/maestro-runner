@@ -14,6 +14,8 @@ import (
 
 	goios "github.com/danielpaulus/go-ios/ios"
 	"github.com/danielpaulus/go-ios/ios/forward"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/devicelab-dev/maestro-runner/pkg/config"
 	"github.com/devicelab-dev/maestro-runner/pkg/logger"
 )
@@ -203,6 +205,9 @@ func (r *Runner) Start(ctx context.Context) error {
 
 // startPortForward uses go-ios to forward the WDA port from a physical device to localhost.
 func (r *Runner) startPortForward() error {
+	// Suppress go-ios internal logrus output (info/error messages about connections)
+	log.SetLevel(log.FatalLevel)
+
 	entry, err := goios.GetDevice(r.deviceUDID)
 	if err != nil {
 		return fmt.Errorf("device %s not found: %w", r.deviceUDID, err)
