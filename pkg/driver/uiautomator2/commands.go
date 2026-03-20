@@ -831,11 +831,16 @@ func (d *Driver) launchApp(step *flow.LaunchAppStep) *core.CommandResult {
 			logger.Warn("launchApp via server failed for %s: %v — falling back to shell commands", appID, err)
 		} else {
 			time.Sleep(1 * time.Second)
-			return successResult(fmt.Sprintf("Launched app: %s", appID), nil)
+			// Verify the app actually came to foreground — some OEMs (e.g. Xiaomi HyperOS)
+			// silently block background startActivity() calls but the HTTP endpoint still returns 200.
+			if d.device != nil && d.isForegroundApp(appID) {
+				return successResult(fmt.Sprintf("Launched app: %s", appID), nil)
+			}
+			logger.Warn("launchApp via server: %s not in foreground after launch — falling back to shell commands", appID)
 		}
 	}
 
-	// Strategy 2: Shell-based launch (fallback when server endpoint unavailable)
+	// Strategy 2: Shell-based launch (fallback when server endpoint unavailable or foreground check failed)
 	return d.launchAppViaShell(appID, arguments)
 }
 
@@ -922,6 +927,21 @@ func (d *Driver) launchAppViaShell(appID string, arguments map[string]interface{
 	}
 
 	return successResult(fmt.Sprintf("Launched app: %s", appID), nil)
+}
+
+// isForegroundApp checks if the given package is currently in the foreground.
+// Uses dumpsys window to read mCurrentFocus — fast and reliable across API levels.
+func (d *Driver) isForegroundApp(appID string) bool {
+	output, err := d.device.Shell("dumpsys window windows")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "mCurrentFocus") && strings.Contains(line, appID) {
+			return true
+		}
+	}
+	return false
 }
 
 // getAPILevel returns the device's Android API level, or 24 as a safe default.
